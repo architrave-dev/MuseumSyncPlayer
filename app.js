@@ -877,46 +877,37 @@
     if (!isAdmin && !viewerPlaybackAllowed) return;
     if (!isAdmin && waitingForAdminRestart) return;
 
-    // iOS는 playbackRate 변경 시 VideoToolbox 재버퍼링 → 멈춤 현상
-    // 재생 중 seek도 stall 유발 → 일시정지 상태에서 오차 클 때만 보정
-    if (isIOS) {
-      var iosServerT = data.currentTime;
-      var iosLocalT = video.currentTime || 0;
-      var iosDiff = iosServerT - iosLocalT;
-      if (!scheduledPlayTimeoutId && !scheduledStartTimerId) {
-        appendLog(
-          "diff=" + iosDiff.toFixed(3) + "s" +
-          " (server=" + iosServerT.toFixed(2) + "s" +
-          " local=" + iosLocalT.toFixed(2) + "s)",
-        );
-        // Stall 감지: play() 중에 currentTime이 진행되지 않는 경우 (위치 무관)
-        // 직전 이벤트 대비 local이 거의 안 움직였는데 server는 진행됐으면 stall
-        if (!video.paused && !video.seeking) {
-          if (
-            iosPrevLocalT !== null &&
-            Math.abs(iosLocalT - iosPrevLocalT) < 0.05 &&
-            iosServerT - iosPrevServerT > 1.5
-          ) {
-            var iosNowMs = Date.now();
-            if (iosNowMs - iosStallRecoveryLastMs > 4000) {
-              iosStallRecoveryLastMs = iosNowMs;
-              appendLog("iOS stall (t=" + iosLocalT.toFixed(2) + "s) · pause→play 재시도");
-              video.pause();
-              setTimeout(function () { safePlay("ios_stall_retry"); }, 300);
-            }
-          }
-          iosPrevLocalT = iosLocalT;
-          iosPrevServerT = iosServerT;
-        }
-      }
-      return;
-    }
-
     var serverT = data.currentTime;
     var localT = video.currentTime || 0;
     var rawDiff = serverT - localT;
     var isPaused = video.paused;
     var nowMs = Date.now();
+
+    // iOS도 이제 seek 없이 playbackRate 보정을 시도한다.
+    // 기존 stall 감지는 유지해서 rate 변경으로 인한 멈춤이 생기면 복구한다.
+    if (isIOS) {
+      if (!scheduledPlayTimeoutId && !scheduledStartTimerId) {
+        // Stall 감지: play() 중에 currentTime이 진행되지 않는 경우 (위치 무관)
+        // 직전 이벤트 대비 local이 거의 안 움직였는데 server는 진행됐으면 stall
+        if (!video.paused && !video.seeking) {
+          if (
+            iosPrevLocalT !== null &&
+            Math.abs(localT - iosPrevLocalT) < 0.05 &&
+            serverT - iosPrevServerT > 1.5
+          ) {
+            var iosNowMs = Date.now();
+            if (iosNowMs - iosStallRecoveryLastMs > 4000) {
+              iosStallRecoveryLastMs = iosNowMs;
+              appendLog("iOS stall (t=" + localT.toFixed(2) + "s) · pause→play 재시도");
+              video.pause();
+              setTimeout(function () { safePlay("ios_stall_retry"); }, 300);
+            }
+          }
+          iosPrevLocalT = localT;
+          iosPrevServerT = serverT;
+        }
+      }
+    }
 
     if (isPaused) {
       updatePlayStateClass();
