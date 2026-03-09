@@ -4,23 +4,31 @@
 
 ---
 
-## 사용 방법 (단일 영상 + 여러 기기 싱크)
+## 사용 방법 (HLS 스트리밍 + 여러 기기 싱크)
 
-1. **영상 넣기**  
-   - `asset` 폴더에 재생할 영상 파일을 하나 넣어 두세요. (`.mov`, `.mp4`, `.webm`, `.m4v` 지원)
+1. **원본 영상 넣기**  
+   - `asset` 폴더에 원본 영상 파일을 하나 넣어 두세요. (`.mov`, `.mp4`, `.webm`, `.m4v` 지원)
 
-2. **서버 실행**  
+2. **HLS 생성**  
+   - `ffmpeg`가 설치되어 있어야 합니다.
+   - 아래 명령으로 `asset-hls/playlist.m3u8`와 세그먼트 파일을 생성합니다.
+   ```bash
+   npm run build:hls
+   ```
+
+3. **서버 실행**  
    ```bash
    npm install
    npm start
    ```
    - 브라우저에서 `http://localhost:3000` 접속
 
-3. **여러 기기에서 접속**  
+4. **여러 기기에서 접속**  
    - 같은 Wi‑Fi에서 iPhone·iPad 등에서 `http://<이 PC의 IP>:3000` 으로 접속  
-   - 한 기기에서 **재생** 또는 **정지**를 누르면, 접속한 **모든 기기가 같은 시점으로 동기화**됩니다 (브로드캐스트).
+   - 플레이어는 HLS 스트리밍으로 영상을 재생하고, 서버는 재생/정지/현재 시점을 동기화합니다.
+   - 한 기기에서 **재생** 또는 **정지**를 누르면, 접속한 **모든 기기가 같은 시점으로 동기화**됩니다.
 
-4. **루프**  
+5. **루프**  
    - 영상이 끝나면 서버가 0초부터 다시 재생하도록 알려 주어, 모든 기기가 함께 처음부터 재생합니다.
 
 ---
@@ -31,10 +39,11 @@
 |-----|------|
 | 여러 기기에서 같은 시점 재생/정지 | 서버가 “진짜 시계”를 갖고, 재생/정지/시간을 Socket.io로 모든 클라이언트에 브로드캐스트 |
 | iPhone 7·8 등에서 사용 | 웹 + Node 서버 한 대만 같은 Wi‑Fi에 두면 됨 |
+| GB 단위 대용량 영상 | 원본을 사전 HLS 인코딩 후 스트리밍 재생 |
 | 수동 싱크 제거 | 한 기기에서만 재생/정지 누르면 전 기기 동기화 |
 
-- **서버**: Node.js + Express(정적 파일 + `/api/video-url`) + Socket.io  
-- **클라이언트**: 단일 `<video>`, 재생/정지/처음부터 버튼 → 서버에 이벤트 전송, 서버에서 내려준 `state` / `sync` / `time` 으로 `currentTime` 동기화
+- **서버**: Node.js + Express(정적 HLS 파일 + `/api/video-url`) + Socket.io  
+- **클라이언트**: 단일 `<video>` + 네이티브 HLS / `hls.js`, 재생/정지/처음부터 버튼 → 서버에 이벤트 전송, 서버에서 내려준 `state` / `sync` / `time` 으로 `currentTime` 동기화
 
 ---
 
@@ -44,11 +53,14 @@
 VideoPlayerForMuseum/
 ├── README.md
 ├── package.json
+├── scripts/
+│   └── build-hls.js      # asset 원본 영상을 HLS로 사전 인코딩
 ├── server.js           # Express + Socket.io 브로드캐스트 서버
 ├── index.html
 ├── styles.css
-├── app.js              # 단일 영상 + 서버와 싱크
-├── asset/              # 여기에 영상 파일 한 개 넣기
+├── app.js              # HLS 스트리밍 재생 + 서버와 싱크
+├── asset/              # 원본 영상 파일 한 개
+├── asset-hls/          # 생성된 HLS 매니페스트/세그먼트
 └── config.example.js   # (참고용)
 ```
 
@@ -57,7 +69,7 @@ VideoPlayerForMuseum/
 ## 기술 스택
 
 - **Node.js** + Express + Socket.io (서버가 재생 상태·시간을 브로드캐스트)
-- **HTML5 Video** + Vanilla JS (클라이언트는 서버 시그널에 맞춰 재생/정지/seek)
+- **HTML5 Video** + Vanilla JS + `hls.js` (클라이언트는 HLS를 재생하고 서버 시그널에 맞춰 재생/정지/seek)
 
 ---
 
