@@ -53,6 +53,10 @@
 
   var role = "viewer";
   var isAdmin = false;
+  var hasRoleAssigned = false;
+  var hasInitializedVideoSelection = false;
+  var availableVideos = null;
+  var selectedVideoSlot = 1;
 
   var MAX_LOG_LINES = 40;
   var lastSyncPlaying = null;
@@ -148,9 +152,10 @@
   window.appendDiagnosticLog = appendLog;
 
   function getRoleStatusText() {
-    return isAdmin
-      ? "admin 모드 · 이 기기에서 재생을 제어합니다"
-      : "viewer 모드 · 서버 싱크를 따릅니다";
+    if (isAdmin) {
+      return "admin 모드 · 1번 영상을 제어합니다";
+    }
+    return "viewer 모드 · " + selectedVideoSlot + "번 영상을 재생합니다";
   }
 
   function getVideoLoadStatusText() {
@@ -204,6 +209,97 @@
     hasLoggedVideoReady = false;
     hasLoggedCanPlay = false;
     lastLoggedBufferAheadSec = 0;
+  }
+
+  function getVideoEntryBySlot(slot) {
+    if (!availableVideos || !availableVideos.length) return null;
+    for (var i = 0; i < availableVideos.length; i++) {
+      if (availableVideos[i].slot === slot) return availableVideos[i];
+    }
+    return null;
+  }
+
+  function getAvailableSlotNumbers() {
+    if (!availableVideos || !availableVideos.length) return [];
+    return availableVideos.map(function (videoEntry) {
+      return videoEntry.slot;
+    });
+  }
+
+  function askViewerVideoSlot() {
+    var slots = getAvailableSlotNumbers();
+    if (!slots.length) return 1;
+
+    var storedSlot = null;
+    try {
+      storedSlot = window.localStorage.getItem("viewerVideoSlot");
+    } catch (e) {}
+
+    var defaultSlot = slots.indexOf(Number(storedSlot)) >= 0 ? Number(storedSlot) : slots[0];
+    var message =
+      "몇 번 영상을 재생할까요?\n" +
+      "사용 가능한 번호: " +
+      slots.join(", ");
+
+    while (true) {
+      var input = window.prompt(message, String(defaultSlot));
+      var nextSlot = input === null || input.trim() === "" ? defaultSlot : Number(input);
+      if (slots.indexOf(nextSlot) >= 0) {
+        try {
+          window.localStorage.setItem("viewerVideoSlot", String(nextSlot));
+        } catch (e) {}
+        return nextSlot;
+      }
+      window.alert("사용 가능한 영상 번호를 입력해 주세요: " + slots.join(", "));
+    }
+  }
+
+  function loadSelectedVideoEntry(videoEntry) {
+    if (!videoEntry || !videoEntry.url) {
+      setStatus("선택한 영상을 불러오지 못했습니다. HLS를 확인해 주세요.");
+      return;
+    }
+
+    if (videoWrap) videoWrap.classList.add("is-loading");
+    resetVideoLoadDiagnostics();
+    setVideoLoadState("loading");
+    renderStatus();
+
+    function hideLoading() {
+      if (videoWrap) videoWrap.classList.remove("is-loading");
+    }
+
+    function requestSync() {
+      socket.emit("getState");
+      if (isAdmin && adminKey) socket.emit("requestAdmin", { adminKey: adminKey });
+    }
+
+    loadVideoSource(videoEntry.url);
+    appendLog("선택된 영상: " + videoEntry.slot + "번");
+
+    video.addEventListener("canplay", hideLoading, { once: true });
+
+    if (video.readyState >= 2) hideLoading();
+
+    if (video.readyState >= 1) requestSync();
+    else {
+      video.addEventListener("loadedmetadata", requestSync, { once: true });
+    }
+  }
+
+  function initializeVideoSelectionIfReady() {
+    if (hasInitializedVideoSelection) return;
+    if (!hasRoleAssigned || !availableVideos || !availableVideos.length) return;
+
+    if (isAdmin) {
+      selectedVideoSlot = getVideoEntryBySlot(1) ? 1 : availableVideos[0].slot;
+    } else {
+      selectedVideoSlot = askViewerVideoSlot();
+    }
+
+    hasInitializedVideoSelection = true;
+    renderStatus();
+    loadSelectedVideoEntry(getVideoEntryBySlot(selectedVideoSlot));
   }
 
   function destroyHlsPlayer() {
@@ -806,6 +902,8 @@
 
   socket.on("roleAssigned", function (data) {
     applyRole(data && data.role ? data.role : "viewer");
+    hasRoleAssigned = true;
+    initializeVideoSelectionIfReady();
     appendLog("role assigned: " + role);
   });
 
@@ -1183,37 +1281,16 @@
   setupViewerTapOverlay();
   setVideoLoadState("loading");
 
-  fetch("/api/video-url")
+  fetch("/api/videos")
     .then(function (res) {
-      if (!res.ok) throw new Error("No video");
+      if (!res.ok) throw new Error("No videos");
       return res.json();
     })
     .then(function (data) {
-      if (data.url) {
-        if (videoWrap) videoWrap.classList.add("is-loading");
-        resetVideoLoadDiagnostics();
-        setVideoLoadState("loading");
-
-        function hideLoading() {
-          if (videoWrap) videoWrap.classList.remove("is-loading");
-        }
-
-        function requestSync() {
-          socket.emit("getState");
-          if (adminKey) socket.emit("requestAdmin", { adminKey: adminKey });
-        }
-
-        loadVideoSource(data.url);
-
-        video.addEventListener("canplay", hideLoading, { once: true });
-
-        if (video.readyState >= 2) hideLoading();
-
-        if (video.readyState >= 1) requestSync();
-        else {
-          video.addEventListener("loadedmetadata", requestSync, { once: true });
-        }
-      }
+      availableVideos = data && data.videos ? data.videos : [];
+      if (!availableVideos.length) throw new Error("No videos");
+      appendLog("사용 가능한 영상 번호: " + getAvailableSlotNumbers().join(", "));
+      initializeVideoSelectionIfReady();
     })
     .catch(function () {
       setStatus("서버로 접속해 주세요. npm start 후 http://localhost:3000");

@@ -22,11 +22,11 @@ const io = new Server(httpServer);
 const PORT = process.env.PORT || 3000;
 const ASSET_DIR = path.join(__dirname, "asset");
 const HLS_DIR = path.join(__dirname, "asset-hls");
-const HLS_PLAYLIST_PATH = path.join(HLS_DIR, "playlist.m3u8");
 const HLS_VENDOR_DIR = path.join(__dirname, "node_modules", "hls.js", "dist");
 const ADMIN_KEY = process.env.ADMIN_KEY || "CHANGE_ME";
 /** 재생/처음부터 시 viewer가 같은 절대 시각에 시작하도록 주는 유예(초) */
 const SCHEDULED_START_LEAD_SEC = 10;
+const MAX_VIDEO_COUNT = 8;
 
 let state = {
   playing: false,
@@ -204,23 +204,56 @@ function setHlsHeaders(res, filePath) {
   }
 }
 
+function getAvailableVideos() {
+  if (!fs.existsSync(HLS_DIR)) return [];
+
+  return fs
+    .readdirSync(HLS_DIR, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && /^\d+$/.test(entry.name))
+    .map((entry) => Number(entry.name))
+    .filter((slot) => slot >= 1 && slot <= MAX_VIDEO_COUNT)
+    .sort((a, b) => a - b)
+    .filter((slot) => {
+      const playlistPath = path.join(HLS_DIR, String(slot), "playlist.m3u8");
+      return fs.existsSync(playlistPath);
+    })
+    .map((slot) => ({
+      slot,
+      type: "hls",
+      url: "/asset-hls/" + slot + "/playlist.m3u8",
+    }));
+}
+
 app.use("/asset", express.static(ASSET_DIR, { maxAge: "24h" }));
 app.use("/asset-hls", express.static(HLS_DIR, { maxAge: "24h", setHeaders: setHlsHeaders }));
 app.use("/vendor/hls", express.static(HLS_VENDOR_DIR, { maxAge: "24h" }));
 app.use(express.static(__dirname));
 
-app.get("/api/video-url", (req, res) => {
+app.get("/api/videos", (_req, res) => {
   try {
-    if (!fs.existsSync(HLS_PLAYLIST_PATH)) {
+    const videos = getAvailableVideos();
+    if (videos.length === 0) {
       return res.status(404).json({
-        error: "No HLS playlist. Run `npm run build:hls` first.",
+        error: "No HLS playlists. Run `npm run build:hls` first.",
       });
     }
 
-    res.json({
-      type: "hls",
-      url: "/asset-hls/playlist.m3u8",
-    });
+    res.json({ videos });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/video-url", (_req, res) => {
+  try {
+    const videos = getAvailableVideos();
+    const firstVideo = videos.find((video) => video.slot === 1) || videos[0];
+    if (!firstVideo) {
+      return res.status(404).json({
+        error: "No HLS playlists. Run `npm run build:hls` first.",
+      });
+    }
+    res.json(firstVideo);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
