@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
+    <title>Architrave | Museum Sync Player</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="header">
+        <div class="header-left">
+          <h1 class="title">
+            Museum Sync Player<span class="title-mobile-tag" aria-hidden="true"
+              >m</span
+            >
+          </h1>
+          <p class="header-subtitle">
+            Multi-device synced playback for exhibitions
+          </p>
+          <p class="status" id="status" aria-live="polite">서버 연결 대기 중</p>
+        </div>
+      </header>
+
+      <section class="video-section">
+        <div class="video-wrap is-paused" id="videoWrap">
+          <div
+            class="connection-dot"
+            id="connectionDot"
+            aria-hidden="true"
+          ></div>
+          <span class="playback-label" id="playbackLabel">정지</span>
+          <div class="video-time-display" id="videoTimeDisplay" aria-hidden="true">0:00 / 0:00</div>
+          <div
+            class="loading-spinner"
+            id="loadingSpinner"
+            aria-hidden="true"
+          ></div>
+
+          <video
+            id="video"
+            playsinline
+            webkit-playsinline
+            preload="auto"
+            muted
+          ></video>
+
+          <div
+            class="viewer-tap-overlay"
+            id="viewerTapOverlay"
+            aria-hidden="true"
+            aria-label="화면을 터치하여 재생 허용"
+          >
+            <span class="viewer-tap-overlay-text"
+              >화면을 터치하여 재생 허용</span
+            >
+          </div>
+
+          <div class="center-controls" id="centerControls" aria-hidden="false">
+            <button
+              type="button"
+              class="center-btn center-play"
+              id="centerPlay"
+              aria-label="재생 시작 또는 음소거 전환"
+            >
+              🔇
+            </button>
+            <button
+              type="button"
+              class="center-btn center-pause"
+              id="centerPause"
+              aria-label="정지"
+            >
+              ⏸
+            </button>
+          </div>
+
+          <button
+            type="button"
+            class="volume-btn"
+            id="volumeBtn"
+            aria-label="음소거 전환"
+          >
+            🔇
+          </button>
+
+          <button
+            type="button"
+            class="fullscreen-btn"
+            id="fullscreenBtn"
+            aria-label="전체 화면"
+          >
+            ⛶
+          </button>
+        </div>
+      </section>
+
+      <footer class="controls">
+        <div class="controls-main">
+          <div class="controls-info">
+            <h2 class="controls-title">시스템 안내</h2>
+            <p class="controls-text">
+              같은 Wi-Fi에서 이 페이지를 열면 여러 기기가 동시에 재생 ·
+              정지됩니다. 전시는 한 기기에서만 재생/정지 버튼을 사용하세요.
+            </p>
+            <p class="controls-text">
+              재생을 시작하려면 화면(검정 영역)을 한 번 터치해 주세요. (기기당
+              최초 1회)
+            </p>
+          </div>
+
+          <button
+            type="button"
+            class="btn btn-restart"
+            id="btnRestart"
+            aria-label="처음부터"
+          >
+            ↺ 처음부터
+          </button>
+        </div>
+
+        <section class="log-console" aria-label="진단 로그">
+          <header class="log-console-header">진단 로그</header>
+          <div class="log-console-body" id="logConsoleBody"></div>
+        </section>
+      </footer>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
