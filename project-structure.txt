@@ -1,0 +1,154 @@
+프로젝트 이름: Broadcaster — 전시 영상 다중 재생 컨트롤 시스템
+
+1. 전체 개요
+- 여러 디스플레이(플레이어)에서 재생되는 Cloudflare Stream 영상을
+  하나의 웹 컨트롤 패널(/control)에서 동시에 제어하는 Next.js 14 앱.
+- Supabase(PostgreSQL + Realtime)를 단일 소스 오브 트루스로 사용:
+  - videos, global 테이블에 상태를 저장
+  - Realtime으로 컨트롤 패널과 플레이어 간 상태 동기화
+
+2. 주요 외부 의존성
+- Next.js 14(App Router)
+- Supabase (DB, Realtime, Auth)
+- Cloudflare Stream (동영상 호스팅/재생, @cloudflare/stream-react)
+- Tailwind CSS + shadcn 스타일 UI 컴포넌트
+- pnpm (패키지 매니저)
+
+3. 디렉터리 구조 (하이레벨)
+- app/
+  - Next.js App Router 라우트들이 위치.
+  - 서버 컴포넌트와 클라이언트 컴포넌트가 혼합되어 있음.
+- components/
+  - 재사용 가능한 UI 컴포넌트, 컨트롤 패널 UI, 로고 컴포넌트 등.
+- lib/
+  - 공용 유틸 함수 (예: 클래스명 병합용 cn).
+- supabase/
+  - Supabase 클라이언트 설정, DB 마이그레이션, seed 데이터 등.
+- public/
+  - 정적 자원 (예: workbox 서비스 워커 등).
+- jotai.ts
+  - 전역 상태 관리를 위한 Jotai atom 정의(현재 실제 로직에서는 거의 사용되지 않음).
+
+4. 주요 라우트 (app/)
+- / (app/page.tsx)
+  - 진입 페이지.
+  - Supabase videos 테이블의 영상 목록을 불러오거나,
+    Cloudflare Stream REST API를 통해 영상 목록을 조회하는 헬퍼 포함.
+  - /control, /video/[id] 등으로 이동하는 관문 역할.
+
+- /control (app/control/page.tsx)
+  - 전시 운영용 메인 컨트롤 패널 화면.
+  - components/control.tsx를 dynamic import로 클라이언트 전용 렌더링.
+  - 주요 기능:
+    - 전체 재생/일시정지/정지
+    - 개별 영상 재생/일시정지/정지
+    - Loop 대상 지정
+    - Sync(특정 영상 시간 기준으로 전체 시간 맞추기)
+    - test/production 모드 전환 (오버레이 ON/OFF)
+
+- /video/[id] (app/video/[id]/page.tsx, player.tsx)
+  - 각 디스플레이에서 띄우는 풀스크린 플레이어 페이지.
+  - id = Cloudflare Stream Video ID = Supabase videos.video_id.
+  - Cloudflare Stream React 플레이어(@cloudflare/stream-react) 사용.
+  - Supabase Realtime 구독:
+    - videos 테이블: 해당 id에 대한 status, current_time, loop, show_control 등 상태 수신.
+    - global 테이블: control_mode(test/production), sync(동기화 시간) 수신.
+  - 수신 상태에 따라 재생/일시정지/정지/시킹 등을 수행하고,
+    재생 중 현재 시간(current_time)을 Supabase에 주기적으로 업데이트.
+
+- /login (app/login/page.tsx)
+  - Supabase Auth Helpers 기반 로그인/회원가입 화면.
+  - 이메일/비밀번호 입력, 로그인/회원가입 처리 후 리다이렉트.
+
+- /auth/callback (app/auth/callback/route.ts)
+  - Supabase Auth 콜백 라우트.
+  - 쿼리스트링으로 전달된 code를 세션으로 교환하고,
+    성공 시 앱 내 특정 경로로 리다이렉트.
+
+- 기타 예제 라우트 (app/_examples/*)
+  - Supabase + Next.js 예제용 데모 라우트 모음.
+  - 실제 전시 기능과 직접적인 관련은 적고 참고용 코드.
+
+5. 주요 컴포넌트 (components/)
+- components/control.tsx
+  - 컨트롤 패널 핵심 UI.
+  - Supabase에서 videos, global 데이터를 읽고,
+    버튼/토글 조작에 따라 해당 테이블을 update.
+  - Supabase Realtime을 구독하여:
+    - DB 상태 변화 → UI 즉시 반영
+    - Loop 로직 (루프 대상 영상들이 모두 끝나면 전체 재시작 트리거) 구현.
+  - UI 구성: shadcn Table, Button, Switch 등을 사용.
+
+- components/LogoutButton.tsx
+  - Supabase 클라이언트를 사용해 로그아웃(signOut) 수행.
+  - 로그아웃 후 router.refresh()로 화면 상태 갱신.
+
+- components/SupabaseLogo.tsx, components/NextJsLogo.tsx
+  - SVG 벡터 로고 컴포넌트.
+
+- components/ui/*
+  - button.tsx: class-variance-authority 기반 Button 컴포넌트.
+  - switch.tsx: Radix 기반 Switch 토글 컴포넌트.
+  - table.tsx: Table, TableRow 등 표 UI용 프리미티브.
+  - 대부분 Tailwind + cn 유틸을 사용해 스타일 구성.
+
+6. Supabase 연동 구조
+- DB 스키마
+  - videos:
+    - video_id (PK, Cloudflare Video ID)
+    - name, status, current_time, loop, show_control 등.
+  - global:
+    - id(항상 1), control_mode(test/production), sync(동기화 시간).
+
+- 클라이언트/서버 클라이언트
+  - supabase/clients.ts에서 환경변수(SUPABASE_URL, SUPABASE_ANON_KEY 또는 NEXT_PUBLIC_* 버전)를 사용해 클라이언트 생성.
+  - app 라우트, 컴포넌트, 미들웨어 등에서 공통적으로 사용.
+
+- Realtime
+  - 컨트롤 패널: update 쿼리로 videos/global 값을 변경.
+  - 플레이어: videos, global 테이블에 대한 postgres_changes를 구독.
+  - 상태 흐름:
+    - /control → Supabase(videos/global) → Realtime → /video/[id].
+
+- Auth
+  - 클라이언트: createClientComponentClient로 로그인/로그아웃 처리.
+  - 라우트 핸들러: createRouteHandlerClient로 콜백에서 세션 교환.
+  - middleware.ts: createMiddlewareClient로 요청마다 세션 갱신.
+
+7. Cloudflare Stream 연동 구조
+- 영상 업로드 및 관리:
+  - Cloudflare 대시보드에서 영상 업로드.
+  - Video ID를 Supabase videos.video_id로 등록.
+
+- 재생:
+  - app/video/[id]/player.tsx에서 @cloudflare/stream-react의 Stream 컴포넌트 사용.
+  - src에 id(Cloudflare Video ID)를 넘겨 스트림 재생.
+  - StreamPlayerApi를 통해 play/pause/seek 등의 제어 수행.
+
+- 모드(test/production):
+  - Supabase global.control_mode 값에 따라:
+    - test: 영상 이름, 상태, 현재 시간 등 오버레이 표시.
+    - production: 오버레이 없이 영상만 출력.
+
+8. 상태 관리 관점
+- 주 전역 상태 소스:
+  - Supabase DB(videos, global) + Realtime 이벤트.
+  - 컨트롤 패널과 플레이어 모두 이 값을 기준으로 동작.
+
+- React 로컬 상태:
+  - 각 컴포넌트 내에서 useState로 선택된 모드, 로딩 상태, 일시적인 UI 값 등을 관리.
+
+- Jotai:
+  - jotai.ts에 Video 타입, videosAtom(리듀서 기반) 정의.
+  - 현재 코드 상에서는 실제 사용처가 없거나 실험/초기 설계 흔적으로 보임.
+
+9. 미들웨어 및 유틸
+- middleware.ts
+  - Supabase 세션을 요청마다 자동 갱신해주는 미들웨어.
+  - 서버 컴포넌트가 로그인 정보를 쉽게 사용할 수 있도록 함.
+
+- lib/utils.ts
+  - cn 함수: clsx + tailwind-merge를 이용한 클래스 병합 유틸.
+  - UI 컴포넌트 전체에서 공통적으로 사용.
+
+이 파일은 프로젝트 구조와 데이터 흐름을 빠르게 다시 떠올리기 위한 요약 레퍼런스로 사용하면 됩니다.
