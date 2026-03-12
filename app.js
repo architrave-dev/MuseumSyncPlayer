@@ -53,6 +53,10 @@
 
   var role = "viewer";
   var isAdmin = false;
+  var hasRoleAssigned = false;
+  var hasInitializedVideoSelection = false;
+  var availableVideos = null;
+  var selectedVideoSlot = 1;
 
   var MAX_LOG_LINES = 40;
   var lastSyncPlaying = null;
@@ -93,12 +97,12 @@
   var needsManualStart = false;
   var endedSyncRequestTimerId = null;
   var hasLoggedVideoReady = false;
+  var hasLoggedCanPlay = false;
+  var lastLoggedBufferAheadSec = 0;
   var connectionState = "connecting";
   var videoLoadState = "idle";
-  var videoLoadProgressPct = null;
-  var lastLoggedLoadProgressPct = -10;
   var statusOverrideText = "";
-  var objectVideoUrl = null;
+  var hlsPlayer = null;
   /** iOS stall 복구 마지막 시도 시각 (ms) */
   var iosStallRecoveryLastMs = 0;
   /** iOS stall 감지용: 직전 time 이벤트의 local/server 시각 */
@@ -148,19 +152,15 @@
   window.appendDiagnosticLog = appendLog;
 
   function getRoleStatusText() {
-    return isAdmin
-      ? "admin 모드 · 이 기기에서 재생을 제어합니다"
-      : "viewer 모드 · 서버 싱크를 따릅니다";
+    if (isAdmin) {
+      return "admin 모드 · 1번 영상을 제어합니다";
+    }
+    return "viewer 모드 · " + selectedVideoSlot + "번 영상을 재생합니다";
   }
 
   function getVideoLoadStatusText() {
-    if (videoLoadState === "loading") {
-      if (typeof videoLoadProgressPct === "number") {
-        return "로드중 " + videoLoadProgressPct + "%...";
-      }
-      return "로드중...";
-    }
-    if (videoLoadState === "ready") return "로드 완료...";
+    if (videoLoadState === "loading") return "버퍼 준비중...";
+    if (videoLoadState === "ready") return "재생 가능...";
     return "";
   }
 
@@ -202,21 +202,201 @@
 
   function setVideoLoadState(nextState) {
     videoLoadState = nextState;
-    if (nextState !== "loading") videoLoadProgressPct = null;
     renderStatus();
   }
 
-  function updateVideoLoadProgress(nextPct) {
-    if (typeof nextPct !== "number" || !isFinite(nextPct)) return;
-    var normalizedPct = Math.max(0, Math.min(100, Math.round(nextPct)));
-    videoLoadState = "loading";
-    videoLoadProgressPct = normalizedPct;
+  function resetVideoLoadDiagnostics() {
+    hasLoggedVideoReady = false;
+    hasLoggedCanPlay = false;
+    lastLoggedBufferAheadSec = 0;
+  }
+
+  function getVideoEntryBySlot(slot) {
+    if (!availableVideos || !availableVideos.length) return null;
+    for (var i = 0; i < availableVideos.length; i++) {
+      if (availableVideos[i].slot === slot) return availableVideos[i];
+    }
+    return null;
+  }
+
+  function getAvailableSlotNumbers() {
+    if (!availableVideos || !availableVideos.length) return [];
+    return availableVideos.map(function (videoEntry) {
+      return videoEntry.slot;
+    });
+  }
+
+  function askViewerVideoSlot() {
+    var slots = getAvailableSlotNumbers();
+    if (!slots.length) return 1;
+
+    var storedSlot = null;
+    try {
+      storedSlot = window.localStorage.getItem("viewerVideoSlot");
+    } catch (e) {}
+
+    var defaultSlot = slots.indexOf(Number(storedSlot)) >= 0 ? Number(storedSlot) : slots[0];
+    var message =
+      "몇 번 영상을 재생할까요?\n" +
+      "사용 가능한 번호: " +
+      slots.join(", ");
+
+    while (true) {
+      var input = window.prompt(message, String(defaultSlot));
+      var nextSlot = input === null || input.trim() === "" ? defaultSlot : Number(input);
+      if (slots.indexOf(nextSlot) >= 0) {
+        try {
+          window.localStorage.setItem("viewerVideoSlot", String(nextSlot));
+        } catch (e) {}
+        return nextSlot;
+      }
+      window.alert("사용 가능한 영상 번호를 입력해 주세요: " + slots.join(", "));
+    }
+  }
+
+  function loadSelectedVideoEntry(videoEntry) {
+    if (!videoEntry || !videoEntry.url) {
+      setStatus("선택한 영상을 불러오지 못했습니다. HLS를 확인해 주세요.");
+      return;
+    }
+
+    if (videoWrap) videoWrap.classList.add("is-loading");
+    resetVideoLoadDiagnostics();
+    setVideoLoadState("loading");
     renderStatus();
 
-    if (normalizedPct >= lastLoggedLoadProgressPct + 10) {
-      lastLoggedLoadProgressPct = normalizedPct - (normalizedPct % 10);
-      appendLog("영상 다운로드 진행률 " + normalizedPct + "%");
+    function hideLoading() {
+      if (videoWrap) videoWrap.classList.remove("is-loading");
     }
+
+    function requestSync() {
+      socket.emit("getState");
+      if (isAdmin && adminKey) socket.emit("requestAdmin", { adminKey: adminKey });
+    }
+
+    loadVideoSource(videoEntry.url);
+    appendLog("선택된 영상: " + videoEntry.slot + "번");
+
+    video.addEventListener("canplay", hideLoading, { once: true });
+
+    if (video.readyState >= 2) hideLoading();
+
+    if (video.readyState >= 1) requestSync();
+    else {
+      video.addEventListener("loadedmetadata", requestSync, { once: true });
+    }
+  }
+
+  function initializeVideoSelectionIfReady() {
+    if (hasInitializedVideoSelection) return;
+    if (!hasRoleAssigned || !availableVideos || !availableVideos.length) return;
+
+    if (isAdmin) {
+      selectedVideoSlot = getVideoEntryBySlot(1) ? 1 : availableVideos[0].slot;
+    } else {
+      selectedVideoSlot = askViewerVideoSlot();
+    }
+
+    hasInitializedVideoSelection = true;
+    renderStatus();
+    loadSelectedVideoEntry(getVideoEntryBySlot(selectedVideoSlot));
+  }
+
+  function destroyHlsPlayer() {
+    if (!hlsPlayer) return;
+    hlsPlayer.destroy();
+    hlsPlayer = null;
+  }
+
+  function loadVideoSource(url) {
+    destroyHlsPlayer();
+    appendLog("HLS 스트림 로드 시작");
+
+    if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      video.src = url;
+      video.load();
+      appendLog("네이티브 HLS 로드");
+      return;
+    }
+
+    if (window.Hls && window.Hls.isSupported()) {
+      hlsPlayer = new window.Hls({
+        enableWorker: true,
+        backBufferLength: 90,
+      });
+      hlsPlayer.loadSource(url);
+      hlsPlayer.attachMedia(video);
+      hlsPlayer.on(window.Hls.Events.MANIFEST_PARSED, function (_event, data) {
+        var levelCount = data && data.levels ? data.levels.length : 0;
+        appendLog(
+          "HLS 매니페스트 로드 완료" +
+            (levelCount > 0 ? " (" + levelCount + "개 레벨)" : ""),
+        );
+      });
+      hlsPlayer.on(window.Hls.Events.ERROR, function (_event, data) {
+        if (data && data.fatal) {
+          appendLog("HLS 치명적 오류: " + data.type);
+          setStatus("HLS 재생 오류 · 스트림을 확인해 주세요.");
+        }
+      });
+      return;
+    }
+
+    setStatus("이 브라우저는 HLS 재생을 지원하지 않습니다.");
+  }
+
+  function getBufferedAheadSeconds() {
+    if (!video || !video.buffered || video.buffered.length === 0) return 0;
+
+    var current = video.currentTime || 0;
+    for (var i = 0; i < video.buffered.length; i++) {
+      var start = video.buffered.start(i);
+      var end = video.buffered.end(i);
+      if (current + 0.1 >= start && current <= end + 0.1) {
+        return Math.max(0, end - current);
+      }
+      if (current < start) {
+        return Math.max(0, end - start);
+      }
+    }
+
+    return 0;
+  }
+
+  function logHlsBufferProgress() {
+    if (!video || !video.src) return;
+
+    var bufferedAheadSeconds = getBufferedAheadSeconds();
+    if (bufferedAheadSeconds < 0.5) return;
+
+    var roundedSec = Math.floor(bufferedAheadSeconds);
+    if (roundedSec <= lastLoggedBufferAheadSec) return;
+    if (lastLoggedBufferAheadSec !== 0 && roundedSec - lastLoggedBufferAheadSec < 2) return;
+
+    lastLoggedBufferAheadSec = roundedSec;
+    appendLog("HLS 버퍼 확보 " + bufferedAheadSeconds.toFixed(1) + "s");
+  }
+
+  function maybeMarkVideoReady() {
+    if (hasLoggedVideoReady || !video || !video.src) return;
+
+    var bufferedAheadSeconds = getBufferedAheadSeconds();
+    var hasEnoughBuffer = bufferedAheadSeconds >= (isIOS ? 3 : 5);
+    var nearEnd =
+      isFinite(video.duration) &&
+      video.duration > 0 &&
+      bufferedAheadSeconds >= Math.max(0, video.duration - (video.currentTime || 0) - 0.25);
+
+    if (video.readyState < 3 && !nearEnd) return;
+    if (!hasEnoughBuffer && !nearEnd) return;
+
+    hasLoggedVideoReady = true;
+    setVideoLoadState("ready");
+    appendLog(
+      "준비 완료 · 재생 가능한 버퍼를 확보했습니다 (" +
+        bufferedAheadSeconds.toFixed(1) +
+        "s)",
+    );
   }
 
   function setConnectionOnline(isOnline) {
@@ -722,6 +902,8 @@
 
   socket.on("roleAssigned", function (data) {
     applyRole(data && data.role ? data.role : "viewer");
+    hasRoleAssigned = true;
+    initializeVideoSelectionIfReady();
     appendLog("role assigned: " + role);
   });
 
@@ -793,46 +975,37 @@
     if (!isAdmin && !viewerPlaybackAllowed) return;
     if (!isAdmin && waitingForAdminRestart) return;
 
-    // iOS는 playbackRate 변경 시 VideoToolbox 재버퍼링 → 멈춤 현상
-    // 재생 중 seek도 stall 유발 → 일시정지 상태에서 오차 클 때만 보정
-    if (isIOS) {
-      var iosServerT = data.currentTime;
-      var iosLocalT = video.currentTime || 0;
-      var iosDiff = iosServerT - iosLocalT;
-      if (!scheduledPlayTimeoutId && !scheduledStartTimerId) {
-        appendLog(
-          "diff=" + iosDiff.toFixed(3) + "s" +
-          " (server=" + iosServerT.toFixed(2) + "s" +
-          " local=" + iosLocalT.toFixed(2) + "s)",
-        );
-        // Stall 감지: play() 중에 currentTime이 진행되지 않는 경우 (위치 무관)
-        // 직전 이벤트 대비 local이 거의 안 움직였는데 server는 진행됐으면 stall
-        if (!video.paused && !video.seeking) {
-          if (
-            iosPrevLocalT !== null &&
-            Math.abs(iosLocalT - iosPrevLocalT) < 0.05 &&
-            iosServerT - iosPrevServerT > 1.5
-          ) {
-            var iosNowMs = Date.now();
-            if (iosNowMs - iosStallRecoveryLastMs > 4000) {
-              iosStallRecoveryLastMs = iosNowMs;
-              appendLog("iOS stall (t=" + iosLocalT.toFixed(2) + "s) · pause→play 재시도");
-              video.pause();
-              setTimeout(function () { safePlay("ios_stall_retry"); }, 300);
-            }
-          }
-          iosPrevLocalT = iosLocalT;
-          iosPrevServerT = iosServerT;
-        }
-      }
-      return;
-    }
-
     var serverT = data.currentTime;
     var localT = video.currentTime || 0;
     var rawDiff = serverT - localT;
     var isPaused = video.paused;
     var nowMs = Date.now();
+
+    // iOS도 이제 seek 없이 playbackRate 보정을 시도한다.
+    // 기존 stall 감지는 유지해서 rate 변경으로 인한 멈춤이 생기면 복구한다.
+    if (isIOS) {
+      if (!scheduledPlayTimeoutId && !scheduledStartTimerId) {
+        // Stall 감지: play() 중에 currentTime이 진행되지 않는 경우 (위치 무관)
+        // 직전 이벤트 대비 local이 거의 안 움직였는데 server는 진행됐으면 stall
+        if (!video.paused && !video.seeking) {
+          if (
+            iosPrevLocalT !== null &&
+            Math.abs(localT - iosPrevLocalT) < 0.05 &&
+            serverT - iosPrevServerT > 1.5
+          ) {
+            var iosNowMs = Date.now();
+            if (iosNowMs - iosStallRecoveryLastMs > 4000) {
+              iosStallRecoveryLastMs = iosNowMs;
+              appendLog("iOS stall (t=" + localT.toFixed(2) + "s) · pause→play 재시도");
+              video.pause();
+              setTimeout(function () { safePlay("ios_stall_retry"); }, 300);
+            }
+          }
+          iosPrevLocalT = localT;
+          iosPrevServerT = serverT;
+        }
+      }
+    }
 
     if (isPaused) {
       updatePlayStateClass();
@@ -973,67 +1146,37 @@
     videoTimeDisplay.textContent = formatTime(cur) + " / " + formatTime(dur);
   }
 
-  function markVideoReady() {
-    if (hasLoggedVideoReady) return;
-    hasLoggedVideoReady = true;
-    setVideoLoadState("ready");
-    appendLog("준비 완료 · 영상 파일 다운로드가 완료되었습니다");
-  }
-
-  function downloadVideoAsBlob(videoUrl) {
-    appendLog("영상 다운로드 시작");
-
-    return fetch(videoUrl).then(function (res) {
-      if (!res.ok) {
-        throw new Error("Video download failed");
-      }
-
-      var totalBytesHeader = res.headers.get("content-length");
-      var totalBytes = totalBytesHeader ? parseInt(totalBytesHeader, 10) : 0;
-      var contentType = res.headers.get("content-type") || "video/mp4";
-
-      if (!res.body || !res.body.getReader) {
-        return res.blob().then(function (blob) {
-          updateVideoLoadProgress(100);
-          return blob;
-        });
-      }
-
-      var reader = res.body.getReader();
-      var chunks = [];
-      var loadedBytes = 0;
-
-      function readNextChunk() {
-        return reader.read().then(function (result) {
-          if (result.done) {
-            if (totalBytes > 0) updateVideoLoadProgress(100);
-            return new Blob(chunks, { type: contentType });
-          }
-
-          chunks.push(result.value);
-          loadedBytes += result.value.byteLength;
-          if (totalBytes > 0) {
-            updateVideoLoadProgress((loadedBytes / totalBytes) * 100);
-          }
-          return readNextChunk();
-        });
-      }
-
-      return readNextChunk();
-    });
-  }
-
   video.addEventListener("loadedmetadata", function () {
     if (isFinite(video.duration) && video.duration > 0) {
       socket.emit("mediaReady", { duration: video.duration });
       appendLog("media ready (duration=" + video.duration.toFixed(3) + "s)");
     }
     updateVideoTimeDisplay();
+    logHlsBufferProgress();
+    maybeMarkVideoReady();
   });
 
   video.addEventListener("timeupdate", function () {
     updateVideoTimeDisplay();
   });
+
+  video.addEventListener("progress", function () {
+    logHlsBufferProgress();
+    maybeMarkVideoReady();
+  });
+  video.addEventListener("canplay", function () {
+    if (!hasLoggedCanPlay) {
+      hasLoggedCanPlay = true;
+      appendLog(
+        "HLS canplay · 현재 버퍼 " +
+          getBufferedAheadSeconds().toFixed(1) +
+          "s",
+      );
+    }
+    logHlsBufferProgress();
+    maybeMarkVideoReady();
+  });
+  video.addEventListener("canplaythrough", maybeMarkVideoReady);
 
   video.addEventListener("play", function () {
     clearManualStartUi();
@@ -1138,49 +1281,16 @@
   setupViewerTapOverlay();
   setVideoLoadState("loading");
 
-  fetch("/api/video-url")
+  fetch("/api/videos")
     .then(function (res) {
-      if (!res.ok) throw new Error("No video");
+      if (!res.ok) throw new Error("No videos");
       return res.json();
     })
     .then(function (data) {
-      if (data.url) {
-        if (videoWrap) videoWrap.classList.add("is-loading");
-        hasLoggedVideoReady = false;
-        lastLoggedLoadProgressPct = -10;
-        setVideoLoadState("loading");
-
-        function hideLoading() {
-          if (videoWrap) videoWrap.classList.remove("is-loading");
-        }
-
-        function requestSync() {
-          socket.emit("getState");
-          if (adminKey) socket.emit("requestAdmin", { adminKey: adminKey });
-        }
-
-        downloadVideoAsBlob(data.url)
-          .then(function (blob) {
-            if (objectVideoUrl) {
-              URL.revokeObjectURL(objectVideoUrl);
-            }
-            objectVideoUrl = URL.createObjectURL(blob);
-            video.src = objectVideoUrl;
-            markVideoReady();
-
-            video.addEventListener("canplay", hideLoading, { once: true });
-
-            if (video.readyState >= 2) hideLoading();
-
-            if (video.readyState >= 1) requestSync();
-            else {
-              video.addEventListener("loadedmetadata", requestSync, { once: true });
-            }
-          })
-          .catch(function () {
-            setStatus("영상 다운로드 실패 · 서버를 확인해 주세요.");
-          });
-      }
+      availableVideos = data && data.videos ? data.videos : [];
+      if (!availableVideos.length) throw new Error("No videos");
+      appendLog("사용 가능한 영상 번호: " + getAvailableSlotNumbers().join(", "));
+      initializeVideoSelectionIfReady();
     })
     .catch(function () {
       setStatus("서버로 접속해 주세요. npm start 후 http://localhost:3000");
