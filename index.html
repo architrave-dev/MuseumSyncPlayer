@@ -117,6 +117,41 @@
 
       <footer class="controls">
         <div class="controls-main">
+          <div class="controls-action-row">
+            <button
+              type="button"
+              class="btn btn-restart"
+              id="btnRestart"
+              aria-label="처음부터"
+            >
+              처음부터
+            </button>
+            <button
+              type="button"
+              class="btn btn-jump"
+              id="btnQuarter"
+              aria-label="전체 길이의 1/4 지점으로 이동"
+            >
+              1/4
+            </button>
+            <button
+              type="button"
+              class="btn btn-jump"
+              id="btnHalf"
+              aria-label="전체 길이의 1/2 지점으로 이동"
+            >
+              1/2
+            </button>
+            <button
+              type="button"
+              class="btn btn-jump"
+              id="btnThreeQuarter"
+              aria-label="전체 길이의 3/4 지점으로 이동"
+            >
+              3/4
+            </button>
+          </div>
+
           <div class="controls-info">
             <h2 class="controls-title">시스템 안내</h2>
             <p class="controls-text">
@@ -128,15 +163,6 @@
               최초 1회)
             </p>
           </div>
-
-          <button
-            type="button"
-            class="btn btn-restart"
-            id="btnRestart"
-            aria-label="처음부터"
-          >
-            ↺ 처음부터
-          </button>
         </div>
 
         <section class="log-console" aria-label="진단 로그">

@@ -27,7 +27,7 @@ const MEDIA_PREFIX = (process.env.MEDIA_PREFIX || "museum-sync-player/01_ilmin")
   "",
 );
 /** 재생/처음부터 시 viewer가 같은 절대 시각에 시작하도록 주는 유예(초) */
-const SCHEDULED_START_LEAD_SEC = 10;
+const SCHEDULED_START_LEAD_SEC = 5;
 const MAX_VIDEO_COUNT = 8;
 
 let state = {
@@ -46,6 +46,7 @@ let admin = {
 const viewerSlotsBySocketId = new Map();
 
 let syncIntervalId = null;
+let scheduledSeekTimeoutId = null;
 
 function getCurrentTime() {
   if (!state.playing) return state.baseVideoTime;
@@ -494,6 +495,7 @@ io.on("connection", (socket) => {
     setSeekAt(t);
 
     socket.broadcast.emit("sync", {
+      forceSeek: true,
       playing: state.playing,
       currentTime: state.baseVideoTime,
     });
@@ -501,6 +503,55 @@ io.on("connection", (socket) => {
     console.log("[SYNC][SEEK]", {
       currentTime: state.baseVideoTime,
       playing: state.playing,
+      sender: socket.id,
+      clients: io.sockets.sockets.size,
+    });
+  });
+
+  socket.on("scheduleSeek", (data) => {
+    if (!isAdminSocket(socket)) {
+      socket.emit("notAuthorized", { action: "scheduleSeek" });
+      return;
+    }
+
+    const t =
+      data && typeof data.currentTime === "number" ? data.currentTime : 0;
+    const label =
+      data && typeof data.label === "string" && data.label.trim()
+        ? data.label.trim()
+        : "선택한 지점";
+
+    if (scheduledSeekTimeoutId) {
+      clearTimeout(scheduledSeekTimeoutId);
+      scheduledSeekTimeoutId = null;
+    }
+
+    const serverNow = Date.now() / 1000;
+    const startAtServerTime = serverNow + 3;
+    const delayMs = Math.max(0, Math.round((startAtServerTime - serverNow) * 1000));
+
+    io.emit("sync", {
+      forceSeek: true,
+      playing: state.playing,
+      currentTime: t,
+      startAtServerTime,
+      serverNow,
+      seekLabel: label,
+    });
+
+    scheduledSeekTimeoutId = setTimeout(() => {
+      scheduledSeekTimeoutId = null;
+      setSeekAt(t);
+      io.emit("time", {
+        currentTime: getCurrentTime(),
+        clients: io.sockets.sockets.size,
+      });
+    }, delayMs);
+
+    console.log("[SYNC][SCHEDULE_SEEK]", {
+      currentTime: t,
+      playing: state.playing,
+      startAtServerTime,
       sender: socket.id,
       clients: io.sockets.sockets.size,
     });
