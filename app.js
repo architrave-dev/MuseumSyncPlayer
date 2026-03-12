@@ -256,7 +256,7 @@
 
   function loadSelectedVideoEntry(videoEntry) {
     if (!videoEntry || !videoEntry.url) {
-      setStatus("선택한 영상을 불러오지 못했습니다. HLS를 확인해 주세요.");
+      setStatus("선택한 영상을 불러오지 못했습니다. S3 HLS 설정을 확인해 주세요.");
       return;
     }
 
@@ -1293,6 +1293,6 @@
       initializeVideoSelectionIfReady();
     })
     .catch(function () {
-      setStatus("서버로 접속해 주세요. npm start 후 http://localhost:3000");
+      setStatus("S3 HLS 구성을 확인해 주세요. 서버의 MEDIA_BASE_URL 설정이 필요합니다.");
     });
 })();

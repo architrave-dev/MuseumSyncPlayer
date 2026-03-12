@@ -9,7 +9,6 @@
  */
 
 const path = require("path");
-const fs = require("fs");
 const express = require("express");
 const { createServer } = require("http");
 const { Server } = require("socket.io");
@@ -20,10 +19,13 @@ const httpServer = createServer(app);
 const io = new Server(httpServer);
 
 const PORT = process.env.PORT || 3000;
-const ASSET_DIR = path.join(__dirname, "asset");
-const HLS_DIR = path.join(__dirname, "asset-hls");
 const HLS_VENDOR_DIR = path.join(__dirname, "node_modules", "hls.js", "dist");
 const ADMIN_KEY = process.env.ADMIN_KEY || "CHANGE_ME";
+const MEDIA_BASE_URL = (process.env.MEDIA_BASE_URL || "").replace(/\/+$/, "");
+const MEDIA_PREFIX = (process.env.MEDIA_PREFIX || "museum-sync-player/01_ilmin").replace(
+  /^\/+|\/+$/g,
+  "",
+);
 /** 재생/처음부터 시 viewer가 같은 절대 시각에 시작하도록 주는 유예(초) */
 const SCHEDULED_START_LEAD_SEC = 10;
 const MAX_VIDEO_COUNT = 8;
@@ -204,28 +206,51 @@ function setHlsHeaders(res, filePath) {
   }
 }
 
-function getAvailableVideos() {
-  if (!fs.existsSync(HLS_DIR)) return [];
+function parseVideoSlots(value) {
+  const slots = String(value || "")
+    .split(",")
+    .map((item) => Number(String(item).trim()))
+    .filter((slot) => Number.isInteger(slot) && slot >= 1 && slot <= MAX_VIDEO_COUNT);
 
-  return fs
-    .readdirSync(HLS_DIR, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && /^\d+$/.test(entry.name))
-    .map((entry) => Number(entry.name))
-    .filter((slot) => slot >= 1 && slot <= MAX_VIDEO_COUNT)
-    .sort((a, b) => a - b)
-    .filter((slot) => {
-      const playlistPath = path.join(HLS_DIR, String(slot), "playlist.m3u8");
-      return fs.existsSync(playlistPath);
-    })
-    .map((slot) => ({
-      slot,
-      type: "hls",
-      url: "/asset-hls/" + slot + "/playlist.m3u8",
-    }));
+  if (!slots.length) return [];
+
+  return Array.from(new Set(slots)).sort((a, b) => a - b);
 }
 
-app.use("/asset", express.static(ASSET_DIR, { maxAge: "24h" }));
-app.use("/asset-hls", express.static(HLS_DIR, { maxAge: "24h", setHeaders: setHlsHeaders }));
+function getConfiguredVideoSlots() {
+  const configuredSlots = parseVideoSlots(process.env.VIDEO_SLOTS || "1,2,3,4,5,6,7,8");
+  return configuredSlots.length ? configuredSlots : [1];
+}
+
+function buildMediaUrl(parts) {
+  if (!MEDIA_BASE_URL) return "";
+
+  const cleanedParts = parts
+    .filter(Boolean)
+    .map((part) => String(part).replace(/^\/+|\/+$/g, ""))
+    .filter(Boolean);
+
+  return [MEDIA_BASE_URL].concat(cleanedParts).join("/");
+}
+
+function getSlotFolderName(slot) {
+  return String(slot).padStart(2, "0");
+}
+
+function getSlotManifestUrl(slot) {
+  return buildMediaUrl([MEDIA_PREFIX, getSlotFolderName(slot), "hls", "playlist.m3u8"]);
+}
+
+function getAvailableVideos() {
+  if (!MEDIA_BASE_URL) return [];
+
+  return getConfiguredVideoSlots().map((slot) => ({
+    slot,
+    type: "hls",
+    url: getSlotManifestUrl(slot),
+  }));
+}
+
 app.use("/vendor/hls", express.static(HLS_VENDOR_DIR, { maxAge: "24h" }));
 app.use(express.static(__dirname));
 
@@ -234,7 +259,7 @@ app.get("/api/videos", (_req, res) => {
     const videos = getAvailableVideos();
     if (videos.length === 0) {
       return res.status(404).json({
-        error: "No HLS playlists. Run `npm run build:hls` first.",
+        error: "No S3 HLS playlists configured. Check MEDIA_BASE_URL and VIDEO_SLOTS.",
       });
     }
 
@@ -250,7 +275,7 @@ app.get("/api/video-url", (_req, res) => {
     const firstVideo = videos.find((video) => video.slot === 1) || videos[0];
     if (!firstVideo) {
       return res.status(404).json({
-        error: "No HLS playlists. Run `npm run build:hls` first.",
+        error: "No S3 HLS playlists configured. Check MEDIA_BASE_URL and VIDEO_SLOTS.",
       });
     }
     res.json(firstVideo);
@@ -442,4 +467,7 @@ httpServer.listen(PORT, () => {
   console.log("Video Player for Museum - broadcast sync server");
   console.log("http://localhost:" + PORT);
   console.log("ADMIN_KEY env is required for production.");
+  console.log("MEDIA_BASE_URL:", MEDIA_BASE_URL || "(not set)");
+  console.log("MEDIA_PREFIX:", MEDIA_PREFIX || "(root)");
+  console.log("VIDEO_SLOTS:", getConfiguredVideoSlots().join(", "));
 });

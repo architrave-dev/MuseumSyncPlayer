@@ -1,78 +1,85 @@
 # Video Player for Museum
 
-**전시/갤러리용 브로드캐스트 싱크 플레이어** — 하나의 영상을 여러 기기(iPhone 7·8 등)에서 같은 시점으로 재생·정지·루프합니다.
+전시 환경에서 여러 기기가 서로 다른 영상을 재생하더라도 같은 시간축으로 동기화되도록 만든 브로드캐스트 플레이어입니다.
 
----
+## 개요
 
-## 사용 방법 (HLS 스트리밍 + 여러 기기 싱크)
+- 서버는 하나의 공통 재생 상태와 시간을 유지합니다.
+- admin은 재생, 정지, 처음부터, 탐색을 제어합니다.
+- viewer는 접속 시 재생할 슬롯 번호를 선택합니다.
+- 각 슬롯은 서로 다른 HLS 영상일 수 있지만, 시간축은 서버 기준으로 함께 움직입니다.
+- HLS manifest와 segment는 S3/CloudFront에서 직접 내려받습니다.
 
-1. **원본 영상 넣기**  
-   - `asset` 폴더에 원본 영상 파일을 하나 넣어 두세요. (`.mov`, `.mp4`, `.webm`, `.m4v` 지원)
+## 실행
 
-2. **HLS 생성**  
-   - `ffmpeg`가 설치되어 있어야 합니다.
-   - 아래 명령으로 `asset-hls/playlist.m3u8`와 세그먼트 파일을 생성합니다.
-   ```bash
-   npm run build:hls
-   ```
+1. 프로젝트 루트의 `.env` 에 `ADMIN_KEY`, `MEDIA_BASE_URL`, `MEDIA_PREFIX`, `VIDEO_SLOTS` 가 설정되어 있어야 합니다.
+2. 패키지를 설치하고 서버를 실행합니다.
 
-3. **서버 실행**  
-   ```bash
-   npm install
-   npm start
-   ```
-   - 브라우저에서 `http://localhost:3000` 접속
-
-4. **여러 기기에서 접속**  
-   - 같은 Wi‑Fi에서 iPhone·iPad 등에서 `http://<이 PC의 IP>:3000` 으로 접속  
-   - 플레이어는 HLS 스트리밍으로 영상을 재생하고, 서버는 재생/정지/현재 시점을 동기화합니다.
-   - 한 기기에서 **재생** 또는 **정지**를 누르면, 접속한 **모든 기기가 같은 시점으로 동기화**됩니다.
-
-5. **루프**  
-   - 영상이 끝나면 서버가 0초부터 다시 재생하도록 알려 주어, 모든 기기가 함께 처음부터 재생합니다.
-
----
-
-## CTO 기술 결정 요약
-
-| 니즈 | 대응 |
-|-----|------|
-| 여러 기기에서 같은 시점 재생/정지 | 서버가 “진짜 시계”를 갖고, 재생/정지/시간을 Socket.io로 모든 클라이언트에 브로드캐스트 |
-| iPhone 7·8 등에서 사용 | 웹 + Node 서버 한 대만 같은 Wi‑Fi에 두면 됨 |
-| GB 단위 대용량 영상 | 원본을 사전 HLS 인코딩 후 스트리밍 재생 |
-| 수동 싱크 제거 | 한 기기에서만 재생/정지 누르면 전 기기 동기화 |
-
-- **서버**: Node.js + Express(정적 HLS 파일 + `/api/video-url`) + Socket.io  
-- **클라이언트**: 단일 `<video>` + 네이티브 HLS / `hls.js`, 재생/정지/처음부터 버튼 → 서버에 이벤트 전송, 서버에서 내려준 `state` / `sync` / `time` 으로 `currentTime` 동기화
-
----
-
-## 프로젝트 구조
-
+```bash
+npm install
+npm start
 ```
+
+3. 로컬에서는 `http://localhost:3000` 으로 접속합니다.
+4. 같은 네트워크의 다른 기기에서는 `http://<이 컴퓨터의 IP>:3000` 으로 접속합니다.
+
+## 사용 방식
+
+- admin 접속: `http://<host>:3000/?adminKey=<ADMIN_KEY>`
+- viewer 접속: `http://<host>:3000`
+- admin은 1번 슬롯 기준으로 제어 권한을 가집니다.
+- viewer는 서버가 알려주는 사용 가능한 슬롯 번호 중 하나를 선택합니다.
+- 재생 시작 시 서버는 약간의 유예 시간을 두고 모든 기기에 같은 시작 시각을 전달합니다.
+- 영상 종료 시 서버가 0초부터 다시 시작하도록 브로드캐스트합니다.
+
+## 미디어 구조
+
+서버는 로컬 파일을 스캔하지 않고 `.env` 설정을 바탕으로 HLS URL을 조합합니다. 실제 재생 경로는 아래 패턴을 따릅니다.
+
+```text
+<MEDIA_BASE_URL>/<MEDIA_PREFIX>/01/hls/playlist.m3u8
+<MEDIA_BASE_URL>/<MEDIA_PREFIX>/02/hls/playlist.m3u8
+<MEDIA_BASE_URL>/<MEDIA_PREFIX>/03/hls/playlist.m3u8
+...
+```
+
+정상 재생을 위해서는 CloudFront 또는 S3에서 `.m3u8`, `.ts` 파일에 대한 접근, MIME 타입, CORS 설정이 올바르게 되어 있어야 합니다.
+
+## 선택 기능
+
+- `scripts/build-hls.js` 는 로컬 `asset/` 폴더의 원본 영상을 HLS로 변환하는 보조 스크립트입니다.
+- 실행 시 `asset-hls/` 출력 폴더를 새로 만들고 최대 8개 영상까지 슬롯 순서대로 인코딩합니다.
+- 현재 런타임 재생은 S3/CloudFront 기준이므로, 이 스크립트는 로컬에서 HLS를 준비할 때만 사용합니다.
+
+```bash
+npm run build:hls
+```
+
+## 현재 파일 구성
+
+```text
 VideoPlayerForMuseum/
 ├── README.md
 ├── package.json
-├── scripts/
-│   └── build-hls.js      # asset 원본 영상을 HLS로 사전 인코딩
-├── server.js           # Express + Socket.io 브로드캐스트 서버
+├── package-lock.json
+├── server.js
+├── app.js
 ├── index.html
 ├── styles.css
-├── app.js              # HLS 스트리밍 재생 + 서버와 싱크
-├── asset/              # 원본 영상 파일 한 개
-├── asset-hls/          # 생성된 HLS 매니페스트/세그먼트
-└── config.example.js   # (참고용)
+├── ontology.md
+└── scripts/
+    └── build-hls.js
 ```
-
----
 
 ## 기술 스택
 
-- **Node.js** + Express + Socket.io (서버가 재생 상태·시간을 브로드캐스트)
-- **HTML5 Video** + Vanilla JS + `hls.js` (클라이언트는 HLS를 재생하고 서버 시그널에 맞춰 재생/정지/seek)
+- Node.js
+- Express
+- Socket.IO
+- HTML5 Video
+- Vanilla JavaScript
+- `hls.js`
 
----
+## 라이선스
 
-## 라이선스 / 사용
-
-전시·갤러리·예술가 개인 사용 목적으로 자유롭게 수정·배포 가능합니다.
+무단 사용, 수정, 재사용 및 가공은 불가합니다. 사용이 필요한 경우 `architrave2025@gmail.com` 으로 문의해 주세요.
