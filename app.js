@@ -24,6 +24,9 @@
   var logConsoleBody = document.getElementById("logConsoleBody");
   var logConsoleHeader = document.querySelector(".log-console-header");
   var btnRestart = document.getElementById("btnRestart");
+  var btnQuarter = document.getElementById("btnQuarter");
+  var btnHalf = document.getElementById("btnHalf");
+  var btnThreeQuarter = document.getElementById("btnThreeQuarter");
   var centerPlay = document.getElementById("centerPlay");
   var centerPause = document.getElementById("centerPause");
   var centerControls = document.getElementById("centerControls");
@@ -55,6 +58,7 @@
   var isAdmin = false;
   var hasRoleAssigned = false;
   var hasInitializedVideoSelection = false;
+  var isInitializingVideoSelection = false;
   var availableVideos = null;
   var selectedVideoSlot = 1;
 
@@ -102,6 +106,8 @@
   var connectionState = "connecting";
   var videoLoadState = "idle";
   var statusOverrideText = "";
+  var scheduledJumpTimerId = null;
+  var scheduledJumpCountdownTimerId = null;
   var hlsPlayer = null;
   /** iOS stall 복구 마지막 시도 시각 (ms) */
   var iosStallRecoveryLastMs = 0;
@@ -226,9 +232,29 @@
     });
   }
 
-  function askViewerVideoSlot() {
+  function claimViewerVideoSlot(preferredSlot, callback) {
+    socket.emit("claimVideoSlot", { preferredSlot: preferredSlot }, function (response) {
+      var assignedSlot =
+        response && typeof response.assignedSlot === "number"
+          ? response.assignedSlot
+          : typeof preferredSlot === "number"
+            ? preferredSlot
+            : getAvailableSlotNumbers()[0] || 1;
+
+      try {
+        window.localStorage.setItem("viewerVideoSlot", String(assignedSlot));
+      } catch (e) {}
+
+      callback(assignedSlot, response || null);
+    });
+  }
+
+  function askViewerVideoSlot(callback) {
     var slots = getAvailableSlotNumbers();
-    if (!slots.length) return 1;
+    if (!slots.length) {
+      callback(1);
+      return;
+    }
 
     var storedSlot = null;
     try {
@@ -243,12 +269,19 @@
 
     while (true) {
       var input = window.prompt(message, String(defaultSlot));
-      var nextSlot = input === null || input.trim() === "" ? defaultSlot : Number(input);
+      if (input === null) {
+        continue;
+      }
+
+      var nextSlot = input.trim() === "" ? defaultSlot : Number(input);
       if (slots.indexOf(nextSlot) >= 0) {
-        try {
-          window.localStorage.setItem("viewerVideoSlot", String(nextSlot));
-        } catch (e) {}
-        return nextSlot;
+        claimViewerVideoSlot(nextSlot, function (assignedSlot) {
+          if (assignedSlot !== nextSlot) {
+            appendLog(nextSlot + "번이 이미 사용 중이어서 " + assignedSlot + "번으로 배정");
+          }
+          callback(assignedSlot);
+        });
+        return;
       }
       window.alert("사용 가능한 영상 번호를 입력해 주세요: " + slots.join(", "));
     }
@@ -256,7 +289,7 @@
 
   function loadSelectedVideoEntry(videoEntry) {
     if (!videoEntry || !videoEntry.url) {
-      setStatus("선택한 영상을 불러오지 못했습니다. HLS를 확인해 주세요.");
+      setStatus("선택한 영상을 불러오지 못했습니다. S3 HLS 설정을 확인해 주세요.");
       return;
     }
 
@@ -289,17 +322,25 @@
 
   function initializeVideoSelectionIfReady() {
     if (hasInitializedVideoSelection) return;
+    if (isInitializingVideoSelection) return;
     if (!hasRoleAssigned || !availableVideos || !availableVideos.length) return;
 
     if (isAdmin) {
       selectedVideoSlot = getVideoEntryBySlot(1) ? 1 : availableVideos[0].slot;
-    } else {
-      selectedVideoSlot = askViewerVideoSlot();
+      hasInitializedVideoSelection = true;
+      renderStatus();
+      loadSelectedVideoEntry(getVideoEntryBySlot(selectedVideoSlot));
+      return;
     }
 
-    hasInitializedVideoSelection = true;
-    renderStatus();
-    loadSelectedVideoEntry(getVideoEntryBySlot(selectedVideoSlot));
+    isInitializingVideoSelection = true;
+    askViewerVideoSlot(function (slot) {
+      selectedVideoSlot = slot;
+      hasInitializedVideoSelection = true;
+      isInitializingVideoSelection = false;
+      renderStatus();
+      loadSelectedVideoEntry(getVideoEntryBySlot(selectedVideoSlot));
+    });
   }
 
   function destroyHlsPlayer() {
@@ -587,6 +628,12 @@
     if (videoWrap) videoWrap.classList.toggle("is-admin", isAdmin);
     if (!isAdmin && btnRestart) btnRestart.style.display = "none";
     if (isAdmin && btnRestart) btnRestart.style.display = "";
+    if (!isAdmin && btnQuarter) btnQuarter.style.display = "none";
+    if (isAdmin && btnQuarter) btnQuarter.style.display = "";
+    if (!isAdmin && btnHalf) btnHalf.style.display = "none";
+    if (isAdmin && btnHalf) btnHalf.style.display = "";
+    if (!isAdmin && btnThreeQuarter) btnThreeQuarter.style.display = "none";
+    if (isAdmin && btnThreeQuarter) btnThreeQuarter.style.display = "";
 
     if (isAdmin) {
       hideViewerTapOverlay();
@@ -632,6 +679,28 @@
 
     var t = typeof data.currentTime === "number" ? data.currentTime : 0;
     if (t < 0) t = 0;
+    var shouldForceSeek = !!data.forceSeek;
+    var seekLabel = data && typeof data.seekLabel === "string" ? data.seekLabel : "";
+
+    function applyForcedSeek() {
+      clearScheduledJump();
+      clearScheduledStart();
+      clearStatusOverride();
+      resetSyncEstimators();
+      video.currentTime = t;
+      iosPrevLocalT = null;
+      iosPrevServerT = null;
+
+      if (data.playing) {
+        safePlay("forced_seek");
+      } else {
+        video.pause();
+      }
+
+      updatePlayStateClass();
+      setPlaybackLabel(!!data.playing);
+      appendLog((seekLabel || "admin 점프") + " 적용 (t=" + t.toFixed(3) + "s)");
+    }
 
     if (!isAdmin && !viewerPlaybackAllowed) {
       showViewerTapOverlay();
@@ -641,6 +710,50 @@
         if (lastSyncPlaying === null || lastSyncPlaying !== data.playing) {
           appendLog("sync 수신 · 화면을 터치하여 재생 허용");
         }
+        lastSyncPlaying = data.playing;
+      }
+      return;
+    }
+
+    if (!isAdmin && shouldForceSeek) {
+      waitingForAdminRestart = false;
+      clearStatusOverride();
+      if (
+        typeof data.startAtServerTime === "number" &&
+        data.startAtServerTime > 0
+      ) {
+        scheduleForcedSeekAtServerTime(
+          data.startAtServerTime,
+          data.serverNow,
+          t,
+          seekLabel,
+          !!data.playing,
+        );
+      } else {
+        applyForcedSeek();
+      }
+      if (typeof data.playing === "boolean") {
+        lastSyncPlaying = data.playing;
+      }
+      return;
+    }
+
+    if (isAdmin && shouldForceSeek) {
+      if (
+        typeof data.startAtServerTime === "number" &&
+        data.startAtServerTime > 0
+      ) {
+        scheduleForcedSeekAtServerTime(
+          data.startAtServerTime,
+          data.serverNow,
+          t,
+          seekLabel,
+          !!data.playing,
+        );
+      } else {
+        applyForcedSeek();
+      }
+      if (typeof data.playing === "boolean") {
         lastSyncPlaying = data.playing;
       }
       return;
@@ -726,6 +839,79 @@
       clearTimeout(scheduledPlayTimeoutId);
       scheduledPlayTimeoutId = null;
     }
+  }
+
+  function clearScheduledJump() {
+    if (scheduledJumpCountdownTimerId) {
+      clearInterval(scheduledJumpCountdownTimerId);
+      scheduledJumpCountdownTimerId = null;
+    }
+    if (scheduledJumpTimerId) {
+      clearTimeout(scheduledJumpTimerId);
+      scheduledJumpTimerId = null;
+    }
+  }
+
+  function scheduleForcedSeekAtServerTime(startAtServerTime, serverNow, currentTime, label, playing) {
+    clearScheduledJump();
+
+    var nowMs = Date.now();
+    var nowSec = nowMs / 1000;
+    var offset =
+      serverTimeOffset != null
+        ? serverTimeOffset
+        : serverNow != null
+          ? nowSec - serverNow
+          : 0;
+    var localStartMs = (startAtServerTime + offset) * 1000;
+    var delayMs = localStartMs - nowMs;
+    var seekLabel = label || formatTime(currentTime || 0);
+
+    function applyForcedSeekNow() {
+      clearScheduledJump();
+      clearStatusOverride();
+      resetSyncEstimators();
+      video.currentTime = currentTime;
+      iosPrevLocalT = null;
+      iosPrevServerT = null;
+
+      if (playing) safePlay("forced_seek");
+      else video.pause();
+
+      updatePlayStateClass();
+      setPlaybackLabel(!!playing);
+      appendLog(seekLabel + " 이동 실행 (t=" + currentTime.toFixed(3) + "s)");
+    }
+
+    if (delayMs <= 0) {
+      applyForcedSeekNow();
+      return;
+    }
+
+    var initialSec = Math.ceil(delayMs / 1000);
+    setStatus(seekLabel + " 이동까지 " + initialSec + "초");
+    appendLog(seekLabel + " 이동까지 " + initialSec + "초");
+
+    var lastLoggedSec = initialSec;
+    scheduledJumpCountdownTimerId = setInterval(function () {
+      var remainingMs = localStartMs - Date.now();
+      var remainingSec = remainingMs > 0 ? Math.ceil(remainingMs / 1000) : 0;
+
+      if (remainingSec <= 0) {
+        clearScheduledJump();
+        return;
+      }
+
+      if (remainingSec !== lastLoggedSec) {
+        lastLoggedSec = remainingSec;
+        setStatus(seekLabel + " 이동까지 " + remainingSec + "초");
+        appendLog(seekLabel + " 이동까지 " + remainingSec + "초");
+      }
+    }, 250);
+
+    scheduledJumpTimerId = setTimeout(function () {
+      applyForcedSeekNow();
+    }, Math.max(0, delayMs));
   }
 
   function schedulePlayAtServerTime(startAtServerTime, serverNow, currentTime) {
@@ -896,6 +1082,7 @@
     setConnectionOnline(false);
     stopHeartbeat();
     clearScheduledStart();
+    clearScheduledJump();
     renderStatus();
     appendLog("서버와 연결이 끊어졌습니다.");
   });
@@ -1138,6 +1325,37 @@
     return m + ":" + String(s).padStart(2, "0");
   }
 
+  function formatJumpButtonText(sec) {
+    if (!isFinite(sec) || sec <= 0) return "-";
+
+    var rounded = Math.floor(sec / 10) * 10;
+    var minutes = Math.floor(rounded / 60);
+    var seconds = rounded % 60;
+
+    if (minutes > 0 && seconds > 0) {
+      return minutes + "분 " + seconds + "초";
+    }
+    if (minutes > 0) {
+      return minutes + "분";
+    }
+    return seconds + "초";
+  }
+
+  function updateJumpButtonLabels() {
+    var duration =
+      isFinite(video.duration) && video.duration > 0 ? video.duration : 0;
+
+    if (btnQuarter) {
+      btnQuarter.textContent = formatJumpButtonText(duration * 0.25);
+    }
+    if (btnHalf) {
+      btnHalf.textContent = formatJumpButtonText(duration * 0.5);
+    }
+    if (btnThreeQuarter) {
+      btnThreeQuarter.textContent = formatJumpButtonText(duration * 0.75);
+    }
+  }
+
   function updateVideoTimeDisplay() {
     if (!videoTimeDisplay) return;
     var cur = video.currentTime;
@@ -1151,9 +1369,15 @@
       socket.emit("mediaReady", { duration: video.duration });
       appendLog("media ready (duration=" + video.duration.toFixed(3) + "s)");
     }
+    updateJumpButtonLabels();
     updateVideoTimeDisplay();
     logHlsBufferProgress();
     maybeMarkVideoReady();
+  });
+
+  video.addEventListener("durationchange", function () {
+    updateJumpButtonLabels();
+    updateVideoTimeDisplay();
   });
 
   video.addEventListener("timeupdate", function () {
@@ -1265,7 +1489,45 @@
     appendLog("처음부터 요청 전송 · 서버 예약 시작 대기");
   }
 
+  function jumpToFraction(fraction, label) {
+    if (!isAdmin) {
+      appendLog("viewer 모드에서는 구간 이동 제어 불가");
+      return;
+    }
+    if (!video.src) {
+      setStatus("영상을 불러오지 못했습니다. 서버를 확인해 주세요.");
+      return;
+    }
+    if (!(isFinite(video.duration) && video.duration > 0)) {
+      appendLog("영상 길이를 아직 알 수 없어 " + label + " 이동 불가");
+      return;
+    }
+
+    var targetTime = Math.max(0, Math.min(video.duration * fraction, video.duration));
+    clearScheduledJump();
+    socket.emit("scheduleSeek", {
+      currentTime: targetTime,
+      label: label,
+    });
+    appendLog(label + " 이동 예약 요청 전송 (t=" + targetTime.toFixed(3) + "s)");
+  }
+
   if (btnRestart) btnRestart.addEventListener("click", restartFromZero);
+  if (btnQuarter) {
+    btnQuarter.addEventListener("click", function () {
+      jumpToFraction(0.25, "1/4");
+    });
+  }
+  if (btnHalf) {
+    btnHalf.addEventListener("click", function () {
+      jumpToFraction(0.5, "1/2");
+    });
+  }
+  if (btnThreeQuarter) {
+    btnThreeQuarter.addEventListener("click", function () {
+      jumpToFraction(0.75, "3/4");
+    });
+  }
 
   if (fullscreenBtn) {
     fullscreenBtn.addEventListener("click", function (e) {
@@ -1276,6 +1538,7 @@
 
   updateFullscreenUi();
   updatePlayStateClass();
+  updateJumpButtonLabels();
   setupCenterControls();
   setupVolumeControl();
   setupViewerTapOverlay();
@@ -1293,6 +1556,6 @@
       initializeVideoSelectionIfReady();
     })
     .catch(function () {
-      setStatus("서버로 접속해 주세요. npm start 후 http://localhost:3000");
+      setStatus("S3 HLS 구성을 확인해 주세요. 서버의 MEDIA_BASE_URL 설정이 필요합니다.");
     });
 })();

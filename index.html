@@ -11,7 +11,8 @@
       name="apple-mobile-web-app-status-bar-style"
       content="black-translucent"
     />
-    <title>Architrave | Museum Sync Player</title>
+    <title>Museum Sync Player</title>
+    <link rel="icon" href="/asset/favicon.ico" type="image/x-icon" />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
@@ -19,6 +20,11 @@
       <header class="header">
         <div class="header-left">
           <h1 class="title">
+            <img
+              class="title-logo"
+              src="/asset/icon/logo_fit.png"
+              alt="Architrave"
+            />
             Museum Sync Player<span class="title-mobile-tag" aria-hidden="true"
               >m</span
             >
@@ -38,7 +44,13 @@
             aria-hidden="true"
           ></div>
           <span class="playback-label" id="playbackLabel">정지</span>
-          <div class="video-time-display" id="videoTimeDisplay" aria-hidden="true">0:00 / 0:00</div>
+          <div
+            class="video-time-display"
+            id="videoTimeDisplay"
+            aria-hidden="true"
+          >
+            0:00 / 0:00
+          </div>
           <div
             class="loading-spinner"
             id="loadingSpinner"
@@ -105,6 +117,41 @@
 
       <footer class="controls">
         <div class="controls-main">
+          <div class="controls-action-row">
+            <button
+              type="button"
+              class="btn btn-restart"
+              id="btnRestart"
+              aria-label="처음부터"
+            >
+              처음부터
+            </button>
+            <button
+              type="button"
+              class="btn btn-jump"
+              id="btnQuarter"
+              aria-label="전체 길이의 1/4 지점으로 이동"
+            >
+              1/4
+            </button>
+            <button
+              type="button"
+              class="btn btn-jump"
+              id="btnHalf"
+              aria-label="전체 길이의 1/2 지점으로 이동"
+            >
+              1/2
+            </button>
+            <button
+              type="button"
+              class="btn btn-jump"
+              id="btnThreeQuarter"
+              aria-label="전체 길이의 3/4 지점으로 이동"
+            >
+              3/4
+            </button>
+          </div>
+
           <div class="controls-info">
             <h2 class="controls-title">시스템 안내</h2>
             <p class="controls-text">
@@ -116,15 +163,6 @@
               최초 1회)
             </p>
           </div>
-
-          <button
-            type="button"
-            class="btn btn-restart"
-            id="btnRestart"
-            aria-label="처음부터"
-          >
-            ↺ 처음부터
-          </button>
         </div>
 
         <section class="log-console" aria-label="진단 로그">
@@ -134,8 +172,16 @@
       </footer>
     </div>
 
+    <p class="app-copyright" aria-label="copyright">
+      &copy; <span id="currentYear" class="current-year"></span> Architrave
+    </p>
+
     <script src="/socket.io/socket.io.js"></script>
     <script src="/vendor/hls/hls.min.js"></script>
+    <script>
+      document.getElementById("currentYear").textContent =
+        new Date().getFullYear();
+    </script>
     <script src="app.js"></script>
   </body>
 </html>
