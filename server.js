@@ -43,6 +43,8 @@ let admin = {
   lastHeartbeatMs: 0,
 };
 
+const viewerSlotsBySocketId = new Map();
+
 let syncIntervalId = null;
 
 function getCurrentTime() {
@@ -222,6 +224,48 @@ function getConfiguredVideoSlots() {
   return configuredSlots.length ? configuredSlots : [1];
 }
 
+function getOccupiedVideoSlots() {
+  const occupied = new Set();
+
+  if (admin.socketId && getConfiguredVideoSlots().indexOf(1) >= 0) {
+    occupied.add(1);
+  }
+
+  viewerSlotsBySocketId.forEach((slot) => {
+    if (Number.isInteger(slot)) occupied.add(slot);
+  });
+
+  return occupied;
+}
+
+function assignViewerSlot(socket, preferredSlot) {
+  const availableSlots = getConfiguredVideoSlots();
+  const preferred = Number(preferredSlot);
+
+  viewerSlotsBySocketId.delete(socket.id);
+
+  const occupied = getOccupiedVideoSlots();
+
+  let assignedSlot = null;
+
+  if (availableSlots.indexOf(preferred) >= 0 && !occupied.has(preferred)) {
+    assignedSlot = preferred;
+  }
+
+  if (assignedSlot === null) {
+    assignedSlot = availableSlots.find((slot) => !occupied.has(slot)) || availableSlots[0];
+  }
+
+  viewerSlotsBySocketId.set(socket.id, assignedSlot);
+  socket.data.selectedVideoSlot = assignedSlot;
+
+  return {
+    assignedSlot,
+    availableSlots,
+    occupiedSlots: Array.from(getOccupiedVideoSlots()).sort((a, b) => a - b),
+  };
+}
+
 function buildMediaUrl(parts) {
   if (!MEDIA_BASE_URL) return "";
 
@@ -373,6 +417,17 @@ io.on("connection", (socket) => {
     }
   });
 
+  socket.on("claimVideoSlot", (data, callback) => {
+    const result = assignViewerSlot(
+      socket,
+      data && typeof data.preferredSlot === "number" ? data.preferredSlot : null,
+    );
+
+    if (typeof callback === "function") {
+      callback(result);
+    }
+  });
+
   socket.on("play", (data) => {
     if (!isAdminSocket(socket)) {
       socket.emit("notAuthorized", { action: "play" });
@@ -455,6 +510,7 @@ io.on("connection", (socket) => {
     if (isAdminSocket(socket)) {
       clearAdmin("disconnect");
     }
+    viewerSlotsBySocketId.delete(socket.id);
     scheduleSync();
   });
 

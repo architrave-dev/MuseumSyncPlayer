@@ -27,6 +27,23 @@ html, body {
   padding-bottom: env(safe-area-inset-bottom, 0);
 }
 
+body {
+  position: relative;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background-image: url("/asset/paper_background.png");
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+  opacity: 0.35;
+  pointer-events: none;
+  z-index: 0;
+}
+
 .app {
   max-width: 980px;
   margin: 0 auto;
@@ -35,6 +52,31 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 0;
+  position: relative;
+  z-index: 1;
+}
+
+.app-copyright {
+  position: absolute;
+  right: max(0.5vw, 8px);
+  bottom: calc(max(0.5vw, 8px) + env(safe-area-inset-bottom, 0));
+  width: fit-content;
+  height: fit-content;
+  display: flex;
+  align-items: center;
+  background-color: transparent;
+  margin: 0;
+  color: #666666;
+  font-size: clamp(0.65rem, 0.75vw, 0.65rem);
+  line-height: 1;
+  user-select: none;
+  -webkit-user-select: none;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.current-year {
+  padding-right: 4px;
 }
 
 .header {
@@ -52,11 +94,22 @@ html, body {
 }
 
 .title {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
   font-size: 1.1rem;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   margin: 0;
+}
+
+.title-logo {
+  display: block;
+  width: auto;
+  height: 0.95rem;
+  flex: 0 0 auto;
+  object-fit: contain;
 }
 
 .title-mobile-tag {
@@ -590,5 +643,10 @@ html, body {
 @media (max-width: 500px) {
   .controls .btn {
     min-width: 100px;
+  }
+
+  .app-copyright {
+    right: max(0.5vw, 8px);
+    bottom: calc(max(0.5vw, 8px) + env(safe-area-inset-bottom, 0));
   }
 }

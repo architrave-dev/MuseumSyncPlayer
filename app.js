@@ -55,6 +55,7 @@
   var isAdmin = false;
   var hasRoleAssigned = false;
   var hasInitializedVideoSelection = false;
+  var isInitializingVideoSelection = false;
   var availableVideos = null;
   var selectedVideoSlot = 1;
 
@@ -226,9 +227,29 @@
     });
   }
 
-  function askViewerVideoSlot() {
+  function claimViewerVideoSlot(preferredSlot, callback) {
+    socket.emit("claimVideoSlot", { preferredSlot: preferredSlot }, function (response) {
+      var assignedSlot =
+        response && typeof response.assignedSlot === "number"
+          ? response.assignedSlot
+          : typeof preferredSlot === "number"
+            ? preferredSlot
+            : getAvailableSlotNumbers()[0] || 1;
+
+      try {
+        window.localStorage.setItem("viewerVideoSlot", String(assignedSlot));
+      } catch (e) {}
+
+      callback(assignedSlot, response || null);
+    });
+  }
+
+  function askViewerVideoSlot(callback) {
     var slots = getAvailableSlotNumbers();
-    if (!slots.length) return 1;
+    if (!slots.length) {
+      callback(1);
+      return;
+    }
 
     var storedSlot = null;
     try {
@@ -243,12 +264,23 @@
 
     while (true) {
       var input = window.prompt(message, String(defaultSlot));
-      var nextSlot = input === null || input.trim() === "" ? defaultSlot : Number(input);
+      if (input === null) {
+        claimViewerVideoSlot(null, function (assignedSlot) {
+          appendLog("빈 슬롯 자동 배정: " + assignedSlot + "번");
+          callback(assignedSlot);
+        });
+        return;
+      }
+
+      var nextSlot = input.trim() === "" ? defaultSlot : Number(input);
       if (slots.indexOf(nextSlot) >= 0) {
-        try {
-          window.localStorage.setItem("viewerVideoSlot", String(nextSlot));
-        } catch (e) {}
-        return nextSlot;
+        claimViewerVideoSlot(nextSlot, function (assignedSlot) {
+          if (assignedSlot !== nextSlot) {
+            appendLog(nextSlot + "번이 이미 사용 중이어서 " + assignedSlot + "번으로 배정");
+          }
+          callback(assignedSlot);
+        });
+        return;
       }
       window.alert("사용 가능한 영상 번호를 입력해 주세요: " + slots.join(", "));
     }
@@ -289,17 +321,25 @@
 
   function initializeVideoSelectionIfReady() {
     if (hasInitializedVideoSelection) return;
+    if (isInitializingVideoSelection) return;
     if (!hasRoleAssigned || !availableVideos || !availableVideos.length) return;
 
     if (isAdmin) {
       selectedVideoSlot = getVideoEntryBySlot(1) ? 1 : availableVideos[0].slot;
-    } else {
-      selectedVideoSlot = askViewerVideoSlot();
+      hasInitializedVideoSelection = true;
+      renderStatus();
+      loadSelectedVideoEntry(getVideoEntryBySlot(selectedVideoSlot));
+      return;
     }
 
-    hasInitializedVideoSelection = true;
-    renderStatus();
-    loadSelectedVideoEntry(getVideoEntryBySlot(selectedVideoSlot));
+    isInitializingVideoSelection = true;
+    askViewerVideoSlot(function (slot) {
+      selectedVideoSlot = slot;
+      hasInitializedVideoSelection = true;
+      isInitializingVideoSelection = false;
+      renderStatus();
+      loadSelectedVideoEntry(getVideoEntryBySlot(selectedVideoSlot));
+    });
   }
 
   function destroyHlsPlayer() {
