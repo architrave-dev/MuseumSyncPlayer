@@ -245,16 +245,14 @@ function assignViewerSlot(socket, preferredSlot) {
 
   viewerSlotsBySocketId.delete(socket.id);
 
-  const occupied = getOccupiedVideoSlots();
-
   let assignedSlot = null;
 
-  if (availableSlots.indexOf(preferred) >= 0 && !occupied.has(preferred)) {
+  if (availableSlots.indexOf(preferred) >= 0) {
     assignedSlot = preferred;
   }
 
   if (assignedSlot === null) {
-    assignedSlot = availableSlots.find((slot) => !occupied.has(slot)) || availableSlots[0];
+    assignedSlot = availableSlots[0];
   }
 
   viewerSlotsBySocketId.set(socket.id, assignedSlot);
