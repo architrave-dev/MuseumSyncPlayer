@@ -561,6 +561,7 @@
     isFullScreen = next;
     if (connectionDot) connectionDot.style.display = isFullScreen ? "none" : "";
     if (playbackLabel) playbackLabel.style.display = isFullScreen ? "none" : "";
+    if (videoTimeDisplay) videoTimeDisplay.style.display = isFullScreen ? "none" : "";
     if (volumeBtn) volumeBtn.style.display = isFullScreen ? "none" : "";
     if (videoWrap) videoWrap.classList.toggle("is-fullscreen-ui", isFullScreen);
     if (document.body) document.body.classList.toggle("is-fullscreen-ui", isFullScreen);
