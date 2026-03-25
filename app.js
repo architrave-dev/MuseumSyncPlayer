@@ -108,8 +108,10 @@
   var connectionState = "connecting";
   var videoLoadState = "idle";
   var statusOverrideText = "";
+  var isFullScreen = false;
   var scheduledJumpTimerId = null;
   var scheduledJumpCountdownTimerId = null;
+  var fullscreenUiSyncTimerIds = [];
   var hlsPlayer = null;
   /** iOS stall 복구 마지막 시도 시각 (ms) */
   var iosStallRecoveryLastMs = 0;
@@ -542,11 +544,32 @@
     });
   }
 
-  function isFullscreen() {
+  function getActualFullscreenState() {
     return (
       document.fullscreenElement ||
       document.webkitFullscreenElement ||
-      document.msFullscreenElement
+      document.msFullscreenElement ||
+      (video && video.webkitDisplayingFullscreen)
+    );
+  }
+
+  function setFullscreenState(nextState) {
+    var next = !!nextState;
+    if (isFullScreen !== next) {
+      console.log("[FULLSCREEN_STATE]", { prev: isFullScreen, next: next });
+    }
+    isFullScreen = next;
+    if (connectionDot) connectionDot.style.display = isFullScreen ? "none" : "";
+    if (playbackLabel) playbackLabel.style.display = isFullScreen ? "none" : "";
+    if (volumeBtn) volumeBtn.style.display = isFullScreen ? "none" : "";
+    if (videoWrap) videoWrap.classList.toggle("is-fullscreen-ui", isFullScreen);
+    if (document.body) document.body.classList.toggle("is-fullscreen-ui", isFullScreen);
+    if (!fullscreenBtn) return;
+    fullscreenBtn.classList.remove("is-fullscreen");
+    fullscreenBtn.textContent = "⛶";
+    fullscreenBtn.setAttribute(
+      "aria-label",
+      "전체 화면",
     );
   }
 
@@ -581,20 +604,31 @@
   }
 
   function toggleFullscreen() {
-    if (isFullscreen()) exitFullscreen();
-    else enterFullscreen();
-    updateFullscreenUi();
+    if (isFullScreen) {
+      setFullscreenState(false);
+      exitFullscreen();
+    } else {
+      setFullscreenState(true);
+      enterFullscreen();
+    }
+    syncFullscreenUiSoon();
   }
 
   function updateFullscreenUi() {
-    if (!fullscreenBtn) return;
-    var fs = !!isFullscreen();
-    fullscreenBtn.classList.toggle("is-fullscreen", fs);
-    fullscreenBtn.textContent = fs ? "✕" : "⛶";
-    fullscreenBtn.setAttribute(
-      "aria-label",
-      fs ? "전체 화면 종료" : "전체 화면",
-    );
+    setFullscreenState(!!getActualFullscreenState());
+  }
+
+  function syncFullscreenUiSoon() {
+    while (fullscreenUiSyncTimerIds.length) {
+      clearTimeout(fullscreenUiSyncTimerIds.pop());
+    }
+
+    [120, 300, 800].forEach(function (delay) {
+      var timerId = setTimeout(function () {
+        updateFullscreenUi();
+      }, delay);
+      fullscreenUiSyncTimerIds.push(timerId);
+    });
   }
 
   function updateVolumeUi() {
@@ -1587,6 +1621,14 @@
       e.stopPropagation();
       toggleFullscreen();
     });
+  }
+
+  document.addEventListener("fullscreenchange", syncFullscreenUiSoon);
+  document.addEventListener("webkitfullscreenchange", syncFullscreenUiSoon);
+  document.addEventListener("msfullscreenchange", syncFullscreenUiSoon);
+  if (video) {
+    video.addEventListener("webkitbeginfullscreen", syncFullscreenUiSoon);
+    video.addEventListener("webkitendfullscreen", syncFullscreenUiSoon);
   }
 
   updateFullscreenUi();

@@ -193,6 +193,19 @@ body::before {
   background: rgba(255, 255, 255, 0.85);
 }
 
+.video-wrap:fullscreen .connection-dot,
+.video-wrap:fullscreen .playback-label,
+.video-wrap:-webkit-full-screen .connection-dot,
+.video-wrap:-webkit-full-screen .playback-label,
+.video-wrap:-ms-fullscreen .connection-dot,
+.video-wrap:-ms-fullscreen .playback-label,
+.is-fullscreen-ui .connection-dot,
+.is-fullscreen-ui .playback-label,
+.video-wrap.is-fullscreen-ui .connection-dot,
+.video-wrap.is-fullscreen-ui .playback-label {
+  display: none;
+}
+
 .video-time-display {
   position: absolute;
   top: 10px;
