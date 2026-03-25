@@ -10,6 +10,7 @@
     document.body.classList.add("is-mobile");
   }
   var mobiletag = document.querySelector(".title-mobile-tag");
+  var titleAdminTag = document.getElementById("titleAdminTag");
   if (mobiletag) {
     mobiletag.textContent = isIOS ? "ios" : "m";
   }
@@ -56,6 +57,7 @@
 
   var role = "viewer";
   var isAdmin = false;
+  var hasShownAdminEntryAlert = false;
   var hasRoleAssigned = false;
   var hasInitializedVideoSelection = false;
   var isInitializingVideoSelection = false;
@@ -66,10 +68,10 @@
   var lastSyncPlaying = null;
 
   var SYNC_CFG = {
-    smallDiff: 0.25,            // 250ms 이내는 같은 시점으로 봄
-    largeJumpDiff: 5.0,         // catch-up 프로필 상한
+    smallDiff: 0.25, // 250ms 이내는 같은 시점으로 봄
+    largeJumpDiff: 5.0, // catch-up 프로필 상한
     aggressiveDiffThreshold: 0.8, // 이 이상이면 catch-up 프로필 사용
-    residualAlpha: 0.2,         // diff EMA 계수
+    residualAlpha: 0.2, // diff EMA 계수
 
     diffBands: [
       { max: 0.5, gain: 0.5, maxDelta: 0.15 },
@@ -233,20 +235,24 @@
   }
 
   function claimViewerVideoSlot(preferredSlot, callback) {
-    socket.emit("claimVideoSlot", { preferredSlot: preferredSlot }, function (response) {
-      var assignedSlot =
-        response && typeof response.assignedSlot === "number"
-          ? response.assignedSlot
-          : typeof preferredSlot === "number"
-            ? preferredSlot
-            : getAvailableSlotNumbers()[0] || 1;
+    socket.emit(
+      "claimVideoSlot",
+      { preferredSlot: preferredSlot },
+      function (response) {
+        var assignedSlot =
+          response && typeof response.assignedSlot === "number"
+            ? response.assignedSlot
+            : typeof preferredSlot === "number"
+              ? preferredSlot
+              : getAvailableSlotNumbers()[0] || 1;
 
-      try {
-        window.localStorage.setItem("viewerVideoSlot", String(assignedSlot));
-      } catch (e) {}
+        try {
+          window.localStorage.setItem("viewerVideoSlot", String(assignedSlot));
+        } catch (e) {}
 
-      callback(assignedSlot, response || null);
-    });
+        callback(assignedSlot, response || null);
+      },
+    );
   }
 
   function askViewerVideoSlot(callback) {
@@ -261,11 +267,10 @@
       storedSlot = window.localStorage.getItem("viewerVideoSlot");
     } catch (e) {}
 
-    var defaultSlot = slots.indexOf(Number(storedSlot)) >= 0 ? Number(storedSlot) : slots[0];
+    var defaultSlot =
+      slots.indexOf(Number(storedSlot)) >= 0 ? Number(storedSlot) : slots[0];
     var message =
-      "몇 번 영상을 재생할까요?\n" +
-      "사용 가능한 번호: " +
-      slots.join(", ");
+      "몇 번 영상을 재생할까요?\n" + "사용 가능한 번호: " + slots.join(", ");
 
     while (true) {
       var input = window.prompt(message, String(defaultSlot));
@@ -277,19 +282,28 @@
       if (slots.indexOf(nextSlot) >= 0) {
         claimViewerVideoSlot(nextSlot, function (assignedSlot) {
           if (assignedSlot !== nextSlot) {
-            appendLog(nextSlot + "번이 이미 사용 중이어서 " + assignedSlot + "번으로 배정");
+            appendLog(
+              nextSlot +
+                "번이 이미 사용 중이어서 " +
+                assignedSlot +
+                "번으로 배정",
+            );
           }
           callback(assignedSlot);
         });
         return;
       }
-      window.alert("사용 가능한 영상 번호를 입력해 주세요: " + slots.join(", "));
+      window.alert(
+        "사용 가능한 영상 번호를 입력해 주세요: " + slots.join(", "),
+      );
     }
   }
 
   function loadSelectedVideoEntry(videoEntry) {
     if (!videoEntry || !videoEntry.url) {
-      setStatus("선택한 영상을 불러오지 못했습니다. S3 HLS 설정을 확인해 주세요.");
+      setStatus(
+        "선택한 영상을 불러오지 못했습니다. S3 HLS 설정을 확인해 주세요.",
+      );
       return;
     }
 
@@ -304,7 +318,8 @@
 
     function requestSync() {
       socket.emit("getState");
-      if (isAdmin && adminKey) socket.emit("requestAdmin", { adminKey: adminKey });
+      if (isAdmin && adminKey)
+        socket.emit("requestAdmin", { adminKey: adminKey });
     }
 
     loadVideoSource(videoEntry.url);
@@ -412,7 +427,11 @@
 
     var roundedSec = Math.floor(bufferedAheadSeconds);
     if (roundedSec <= lastLoggedBufferAheadSec) return;
-    if (lastLoggedBufferAheadSec !== 0 && roundedSec - lastLoggedBufferAheadSec < 2) return;
+    if (
+      lastLoggedBufferAheadSec !== 0 &&
+      roundedSec - lastLoggedBufferAheadSec < 2
+    )
+      return;
 
     lastLoggedBufferAheadSec = roundedSec;
     appendLog("HLS 버퍼 확보 " + bufferedAheadSeconds.toFixed(1) + "s");
@@ -426,7 +445,8 @@
     var nearEnd =
       isFinite(video.duration) &&
       video.duration > 0 &&
-      bufferedAheadSeconds >= Math.max(0, video.duration - (video.currentTime || 0) - 0.25);
+      bufferedAheadSeconds >=
+        Math.max(0, video.duration - (video.currentTime || 0) - 0.25);
 
     if (video.readyState < 3 && !nearEnd) return;
     if (!hasEnoughBuffer && !nearEnd) return;
@@ -626,6 +646,7 @@
     isAdmin = role === "admin";
 
     if (videoWrap) videoWrap.classList.toggle("is-admin", isAdmin);
+    if (titleAdminTag) titleAdminTag.classList.toggle("is-visible", isAdmin);
     if (!isAdmin && btnRestart) btnRestart.style.display = "none";
     if (isAdmin && btnRestart) btnRestart.style.display = "";
     if (!isAdmin && btnQuarter) btnQuarter.style.display = "none";
@@ -636,6 +657,10 @@
     if (isAdmin && btnThreeQuarter) btnThreeQuarter.style.display = "";
 
     if (isAdmin) {
+      if (adminKey && !hasShownAdminEntryAlert) {
+        hasShownAdminEntryAlert = true;
+        window.alert("관리자 인증이 확인되어 admin으로 입장합니다.");
+      }
       hideViewerTapOverlay();
       waitingForAdminRestart = false;
       startHeartbeat();
@@ -680,7 +705,8 @@
     var t = typeof data.currentTime === "number" ? data.currentTime : 0;
     if (t < 0) t = 0;
     var shouldForceSeek = !!data.forceSeek;
-    var seekLabel = data && typeof data.seekLabel === "string" ? data.seekLabel : "";
+    var seekLabel =
+      data && typeof data.seekLabel === "string" ? data.seekLabel : "";
 
     function applyForcedSeek() {
       clearScheduledJump();
@@ -699,7 +725,9 @@
 
       updatePlayStateClass();
       setPlaybackLabel(!!data.playing);
-      appendLog((seekLabel || "admin 점프") + " 적용 (t=" + t.toFixed(3) + "s)");
+      appendLog(
+        (seekLabel || "admin 점프") + " 적용 (t=" + t.toFixed(3) + "s)",
+      );
     }
 
     if (!isAdmin && !viewerPlaybackAllowed) {
@@ -852,7 +880,13 @@
     }
   }
 
-  function scheduleForcedSeekAtServerTime(startAtServerTime, serverNow, currentTime, label, playing) {
+  function scheduleForcedSeekAtServerTime(
+    startAtServerTime,
+    serverNow,
+    currentTime,
+    label,
+    playing,
+  ) {
     clearScheduledJump();
 
     var nowMs = Date.now();
@@ -909,9 +943,12 @@
       }
     }, 250);
 
-    scheduledJumpTimerId = setTimeout(function () {
-      applyForcedSeekNow();
-    }, Math.max(0, delayMs));
+    scheduledJumpTimerId = setTimeout(
+      function () {
+        applyForcedSeekNow();
+      },
+      Math.max(0, delayMs),
+    );
   }
 
   function schedulePlayAtServerTime(startAtServerTime, serverNow, currentTime) {
@@ -958,7 +995,11 @@
 
       var initialSecIOS = Math.ceil(delayMs / 1000);
       appendLog(
-        "iOS 예약 시작 " + initialSecIOS + "초 후 (서버 시각 " + startAtServerTime.toFixed(1) + "s)",
+        "iOS 예약 시작 " +
+          initialSecIOS +
+          "초 후 (서버 시각 " +
+          startAtServerTime.toFixed(1) +
+          "s)",
       );
 
       var iosLastLoggedSec = null;
@@ -981,8 +1022,13 @@
         updatePlayStateClass();
         setPlaybackLabel(true);
 
-        var targetTime = typeof currentTime === "number" && currentTime >= 0 ? currentTime : 0;
-        appendLog("iOS 예약 시작 실행 (서버 시각 " + startAtServerTime.toFixed(1) + "s)");
+        var targetTime =
+          typeof currentTime === "number" && currentTime >= 0 ? currentTime : 0;
+        appendLog(
+          "iOS 예약 시작 실행 (서버 시각 " +
+            startAtServerTime.toFixed(1) +
+            "s)",
+        );
 
         // warm seek 실험용 비활성화:
         // 재생 중 seek 대신 예약 시각까지 pause 유지 후 seek + play만 수행한다.
@@ -1183,9 +1229,13 @@
             var iosNowMs = Date.now();
             if (iosNowMs - iosStallRecoveryLastMs > 4000) {
               iosStallRecoveryLastMs = iosNowMs;
-              appendLog("iOS stall (t=" + localT.toFixed(2) + "s) · pause→play 재시도");
+              appendLog(
+                "iOS stall (t=" + localT.toFixed(2) + "s) · pause→play 재시도",
+              );
               video.pause();
-              setTimeout(function () { safePlay("ios_stall_retry"); }, 300);
+              setTimeout(function () {
+                safePlay("ios_stall_retry");
+              }, 300);
             }
           }
           iosPrevLocalT = localT;
@@ -1392,9 +1442,7 @@
     if (!hasLoggedCanPlay) {
       hasLoggedCanPlay = true;
       appendLog(
-        "HLS canplay · 현재 버퍼 " +
-          getBufferedAheadSeconds().toFixed(1) +
-          "s",
+        "HLS canplay · 현재 버퍼 " + getBufferedAheadSeconds().toFixed(1) + "s",
       );
     }
     logHlsBufferProgress();
@@ -1503,13 +1551,18 @@
       return;
     }
 
-    var targetTime = Math.max(0, Math.min(video.duration * fraction, video.duration));
+    var targetTime = Math.max(
+      0,
+      Math.min(video.duration * fraction, video.duration),
+    );
     clearScheduledJump();
     socket.emit("scheduleSeek", {
       currentTime: targetTime,
       label: label,
     });
-    appendLog(label + " 이동 예약 요청 전송 (t=" + targetTime.toFixed(3) + "s)");
+    appendLog(
+      label + " 이동 예약 요청 전송 (t=" + targetTime.toFixed(3) + "s)",
+    );
   }
 
   if (btnRestart) btnRestart.addEventListener("click", restartFromZero);
@@ -1552,10 +1605,14 @@
     .then(function (data) {
       availableVideos = data && data.videos ? data.videos : [];
       if (!availableVideos.length) throw new Error("No videos");
-      appendLog("사용 가능한 영상 번호: " + getAvailableSlotNumbers().join(", "));
+      appendLog(
+        "사용 가능한 영상 번호: " + getAvailableSlotNumbers().join(", "),
+      );
       initializeVideoSelectionIfReady();
     })
     .catch(function () {
-      setStatus("S3 HLS 구성을 확인해 주세요. 서버의 MEDIA_BASE_URL 설정이 필요합니다.");
+      setStatus(
+        "S3 HLS 구성을 확인해 주세요. 서버의 MEDIA_BASE_URL 설정이 필요합니다.",
+      );
     });
 })();

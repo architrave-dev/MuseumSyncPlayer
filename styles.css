@@ -125,6 +125,18 @@ body::before {
   display: inline;
 }
 
+.title-admin-tag {
+  display: none;
+  font-size: 0.9em;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text);
+}
+
+.title-admin-tag.is-visible {
+  display: inline;
+}
+
 .header-subtitle {
   font-size: 0.75rem;
   color: var(--muted);
