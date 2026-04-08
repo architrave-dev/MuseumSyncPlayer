@@ -382,8 +382,12 @@
     }
 
     if (window.Hls && window.Hls.isSupported()) {
+      // 전방 버퍼 상한을 낮춰 장시간 재생 시 MSE/메모리 부담 완화 (품질·변주와 무관)
+      // maxMaxBufferLength: 고비트레이트에서 목표 버퍼가 일시적으로 커질 때의 상한
       hlsPlayer = new window.Hls({
         enableWorker: true,
+        maxBufferLength: 30,
+        maxMaxBufferLength: 40,
         backBufferLength: 90,
       });
       hlsPlayer.loadSource(url);
