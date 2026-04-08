@@ -98,6 +98,9 @@
   var lastRateChangeTimeMs = 0;
 
   var lastAppliedRateLog = null;
+  /** time 싱크 상세 diff 로그: 장시간 재생 시 DOM/GC 부담 완화용 최소 간격(ms) */
+  var TIME_SYNC_DIFF_LOG_MIN_INTERVAL_MS = 120000;
+  var lastTimeSyncDiffVerboseLogMs = 0;
   var heartbeatTimerId = null;
 
   var needsManualStart = false;
@@ -137,7 +140,7 @@
           : "-";
       logConsoleHeader.textContent = "진단 로그 · 현재 속도: " + speed;
     }
-  }, 1500);
+  }, 5000);
 
   function appendLog(text) {
     if (!logConsoleBody) return;
@@ -219,6 +222,7 @@
     hasLoggedVideoReady = false;
     hasLoggedCanPlay = false;
     lastLoggedBufferAheadSec = 0;
+    lastTimeSyncDiffVerboseLogMs = 0;
   }
 
   function getVideoEntryBySlot(slot) {
@@ -431,7 +435,7 @@
     if (roundedSec <= lastLoggedBufferAheadSec) return;
     if (
       lastLoggedBufferAheadSec !== 0 &&
-      roundedSec - lastLoggedBufferAheadSec < 2
+      roundedSec - lastLoggedBufferAheadSec < 10
     )
       return;
 
@@ -1292,17 +1296,25 @@
         rawDiff * SYNC_CFG.residualAlpha;
     var diff = syncDiffEma;
 
-    appendLog(
-      "diff=" +
-        diff.toFixed(3) +
-        "s (raw=" +
-        rawDiff.toFixed(3) +
-        "s) (server=" +
-        serverT.toFixed(2) +
-        "s local=" +
-        localT.toFixed(2) +
-        "s)",
-    );
+    var shouldLogVerboseDiff =
+      lastTimeSyncDiffVerboseLogMs === 0 ||
+      nowMs - lastTimeSyncDiffVerboseLogMs >=
+        TIME_SYNC_DIFF_LOG_MIN_INTERVAL_MS ||
+      Math.abs(rawDiff) >= SYNC_CFG.aggressiveDiffThreshold;
+    if (shouldLogVerboseDiff) {
+      lastTimeSyncDiffVerboseLogMs = nowMs;
+      appendLog(
+        "diff=" +
+          diff.toFixed(3) +
+          "s (raw=" +
+          rawDiff.toFixed(3) +
+          "s) (server=" +
+          serverT.toFixed(2) +
+          "s local=" +
+          localT.toFixed(2) +
+          "s)",
+      );
+    }
 
     var SMALL_DIFF = SYNC_CFG.smallDiff;
     var LARGE_JUMP_DIFF = SYNC_CFG.largeJumpDiff;
